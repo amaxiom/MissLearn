@@ -1,0 +1,56 @@
+{
+  "cases": {
+    "MissBayesClassifier": {
+      "fit_s": 0.0123,
+      "predict_s": 0.0506,
+      "score": 0.866
+    },
+    "MissBayesRegressor": {
+      "fit_s": 0.0082,
+      "predict_s": 0.0248,
+      "score": 0.843188
+    },
+    "MissLASSORegressor": {
+      "fit_s": 0.0931,
+      "predict_s": 0.0039,
+      "score": 0.903127
+    },
+    "MissLinear": {
+      "fit_s": 1.7086,
+      "predict_s": 0.007,
+      "score": 0.888985
+    },
+    "MissLinear_se": {
+      "fit_s": 0.632,
+      "predict_s": 0.0018,
+      "score": 0.903142
+    },
+    "MissLogistic": {
+      "fit_s": 0.0662,
+      "predict_s": 0.0091,
+      "score": 0.885
+    },
+    "MissNeighborsRegressor": {
+      "fit_s": 0.0535,
+      "predict_s": 0.0441,
+      "score": 0.859304
+    },
+    "MissRidgeRegressor": {
+      "fit_s": 0.1847,
+      "predict_s": 0.0088,
+      "score": 0.888995
+    },
+    "MissSupportClassifier": {
+      "fit_s": 0.0299,
+      "predict_s": 0.0083,
+      "score": 0.943333
+    }
+  },
+  "environment": {
+    "MissLearn": "0.9.1",
+    "numpy": "1.26.4",
+    "platform": "Windows-10-10.0.26200-SP0",
+    "python": "3.11.5",
+    "sklearn": "1.6.1"
+  }
+}
