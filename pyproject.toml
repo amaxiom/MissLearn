@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "misslearn"
+dynamic = ["version"]
+description = "Full-Information Maximum Likelihood (FIML) machine learning with native missing-data support - no imputation, no listwise deletion, no fake data."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "Amanda S. Barnard" }]
+keywords = [
+    "missing-data", "FIML", "maximum-likelihood", "imputation",
+    "machine-learning", "scikit-learn", "regression", "classification",
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "numpy>=1.22",
+    "scipy>=1.8",
+    "scikit-learn>=1.1",
+]
+
+[project.optional-dependencies]
+pandas = ["pandas>=1.4"]
+plots = ["matplotlib>=3.5"]
+# Gradient-boosted tree learners usable as MissEnsemble members
+trees = ["xgboost>=1.6", "lightgbm>=3.3"]
+all = ["pandas>=1.4", "matplotlib>=3.5", "xgboost>=1.6", "lightgbm>=3.3"]
+test = ["pytest>=7.0", "pytest-cov>=4.0", "hypothesis>=6.0"]
+
+[project.urls]
+Homepage = "https://github.com/amaxiom/MissLearn"
+Repository = "https://github.com/amaxiom/MissLearn"
+Documentation = "https://github.com/amaxiom/MissLearn/tree/main/docs"
+Issues = "https://github.com/amaxiom/MissLearn/issues"
+
+[tool.setuptools]
+packages = ["MissLearn"]
+
+[tool.setuptools.package-data]
+# PEP 561: without this marker a type checker ignores the annotations
+# entirely, so the hints would be present in the source and invisible to
+# every consumer.
+MissLearn = ["py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "MissLearn.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The suites are named *_test_suite.py rather than test_*.py, so the default
+# discovery pattern finds nothing and pytest exits 5 with "no tests ran".
+python_files = ["*_test_suite.py", "test_*.py"]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::UserWarning",
+]
+
+[tool.coverage.run]
+source = ["MissLearn"]
+branch = true
+
+[tool.coverage.report]
+# Branch coverage matters more than line coverage here. The defects this
+# project has shipped lived in branches that ordinary data never reaches:
+# the fallback when no complete cases exist, the refusal when a column is
+# entirely missing, the single-class seed. A line-coverage figure would have
+# looked healthy throughout.
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if TYPE_CHECKING:",
+]
