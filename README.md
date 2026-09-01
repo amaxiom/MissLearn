@@ -1,5 +1,12 @@
 # MissLearn
 
+[![CI](https://github.com/amaxiom/MissLearn/actions/workflows/ci.yml/badge.svg)](https://github.com/amaxiom/MissLearn/actions/workflows/ci.yml)
+[![Docs](https://github.com/amaxiom/MissLearn/actions/workflows/docs.yml/badge.svg)](https://github.com/amaxiom/MissLearn/actions/workflows/docs.yml)
+[![Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen)](https://github.com/amaxiom/MissLearn#testing)
+[![Python](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12-blue)](https://github.com/amaxiom/MissLearn)
+[![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-compatible-orange)](https://scikit-learn.org)
+
 **sklearn-style estimators with native missing-data support via Full Information Maximum Likelihood (FIML).**
 
 > No imputation. No listwise deletion. No fake data.
@@ -162,12 +169,28 @@ MissLearn/
 └── LICENSE
 ```
 
-There is deliberately no separate staging copy of the package. One existed and
-drifted: three library fixes made in a single session reached only the source
-tree and would have shipped missing. A second copy that has to be kept in sync
-by hand is a defect in itself, so packaging now builds from `MissLearn/`
-directly. The previous staging area, including the verified 0.9.1 artefacts,
-is kept under `_archive/` rather than deleted.
+## Citation
+
+If you use MissLearn in published work, please cite the software. There is no
+paper yet; this section will be updated when there is one.
+
+​```bibtex
+@software{barnard2026misslearn,
+  author  = {Barnard, Amanda S.},
+  title   = {{MissLearn}: full-information machine learning from data with
+             meaningful missingness},
+  year    = {2026},
+  version = {0.9.2},
+  url     = {https://github.com/amaxiom/MissLearn},
+  note    = {Python package, MIT licence}
+}
+​```
+
+Or in text:
+
+> Barnard, A. S. (2026). *MissLearn: full-information machine learning from
+> data with meaningful missingness* (Version 0.9.2) [Computer software].
+> https://github.com/amaxiom/MissLearn
 
 ## License
 
