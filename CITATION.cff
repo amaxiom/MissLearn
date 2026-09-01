@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: "MissLearn: full-information machine learning from data with meaningful missingness"
+message: "If you use this software, please cite it as below."
+type: software
+authors:
+  - given-names: "Amanda S."
+    family-names: Barnard
+    orcid: "https://orcid.org/0000-0002-4784-2382"
+    affiliation: "School of Computing, Australian National University"
+version: 0.9.2
+date-released: "2026-09-01"
+license: MIT
+repository-code: "https://github.com/amaxiom/MissLearn"
+url: "https://github.com/amaxiom/MissLearn"
+abstract: >-
+  Scikit-learn-style estimators that learn directly from incomplete data by
+  full-information maximum likelihood. Each observation contributes exactly
+  the features it contains and predictions marginalise over unknown features
+  rather than replacing them, so nothing is imputed and nothing is deleted.
+  Twelve model families span linear, penalized, kernel, generative,
+  Gaussian-process and mixed-effects learners, with tools for missingness
+  diagnostics, multiple imputation, exact Shapley-value explanations and
+  sensitivity analysis for data missing not at random.
+keywords:
+  - missing data
+  - full information maximum likelihood
+  - machine learning
+  - scikit-learn
+  - imputation
+  - Python
