@@ -1,0 +1,78 @@
+name: Publish documentation
+
+# ci.yml already builds the site with -W on every push and pull request, and
+# uploads it as a downloadable artefact. That proves the documentation
+# compiles; it does not put it anywhere a reader can reach, which is why the
+# roadmap listed hosted documentation as the single most visible gap.
+#
+# This workflow does the publishing half, from main only. The build is
+# repeated rather than shared with ci.yml on purpose: a deploy that consumes
+# an artefact from another workflow run can publish a build made from a
+# different commit, and the extra three minutes is cheaper than diagnosing
+# that once.
+#
+# Before the first run, set Settings -> Pages -> Source to "GitHub Actions".
+# Without that the deploy step fails with a 404 on the Pages API.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages deployment needs id-token for the OIDC exchange and pages:write to
+# publish. Everything else stays read-only.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One deployment at a time. cancel-in-progress is false because cancelling a
+# half-finished deploy can leave the site serving a partial build.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: build the site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install -r docs/requirements.txt
+
+      - name: Build
+        # Same flags as the gate in ci.yml. If they ever diverge, the site can
+        # publish content that the pull-request check would have rejected.
+        run: sphinx-build -b html -W --keep-going docs docs/_build/html
+
+      - name: Disable Jekyll
+        # GitHub Pages runs Jekyll by default, which silently drops every
+        # directory whose name starts with an underscore. Sphinx puts the
+        # entire stylesheet and script bundle in _static, so without this the
+        # site publishes as unstyled HTML.
+        run: touch docs/_build/html/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs/_build/html
+
+  deploy:
+    name: deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

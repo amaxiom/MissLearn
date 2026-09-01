@@ -1,0 +1,191 @@
+name: CI
+
+# The conformance suite only prevents drift if something runs it on every
+# change. Until this existed the guarantee was per-class discipline, which is
+# how MissLASSOClassifier came to lack a fallback its siblings had.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: tests (py${{ matrix.python-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The floor and the ceiling of the declared requires-python range, on
+        # both platforms the package is actually used on. A matrix that only
+        # tests one interpreter cannot catch a syntax or API floor violation.
+        os: [ubuntu-latest, windows-latest]
+        python-version: ['3.9', '3.12']
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,test]"
+
+      - name: Unit suite
+        run: pytest tests/unit_test_suite.py -q --tb=short
+
+      - name: Cross-estimator conformance suite
+        # -ra surfaces the xfail reasons in the log. Each one is a declared
+        # sibling divergence and therefore a work item; an XPASS means one has
+        # been fixed and its entry in KNOWN_FAILURES should be deleted.
+        run: pytest tests/conformance_test_suite.py -q --tb=short -ra
+
+      - name: Property-based suite
+        # Generated data, so it explores regimes nobody wrote down. The fixed
+        # regime list came from failures already found; this looks for the
+        # ones that have not been.
+        run: pytest tests/property_test_suite.py -q --tb=short
+
+      - name: scikit-learn estimator contract
+        # Every fittable estimator, discovered from the package rather than
+        # listed here. The list used to name nine of the twenty-three, and the
+        # fourteen it left out were not passing quietly: MissSupportClassifier
+        # had two real failures, six dispatchers declared allow_nan=False while
+        # the classes they delegate to declared True, and the mixed-effects
+        # trio could not be called as fit(X, y) at all. None of that was
+        # visible, because CI was only ever asked about nine.
+        #
+        # Discovering the names means a new estimator is covered the day it is
+        # added, instead of the day somebody remembers to edit this file.
+        #
+        # Exceptions are declared with reasons in MissLearn/_sklearn_compat.py:
+        # two apply to the whole library and cannot be resolved without making
+        # it worse, and one is an upstream libsvm limitation that a plain
+        # scikit-learn SVC(probability=True) fails identically.
+        run: |
+          python - <<'PY'
+          import inspect, warnings
+          warnings.filterwarnings("ignore")
+          import MissLearn as ML
+          from MissLearn._sklearn_compat import expected_failed_checks
+          from sklearn.base import BaseEstimator
+          from sklearn.utils.estimator_checks import check_estimator
+
+          names = sorted(
+              n for n in dir(ML)
+              if n.startswith("Miss")
+              and inspect.isclass(getattr(ML, n))
+              and issubclass(getattr(ML, n), BaseEstimator)
+              and hasattr(getattr(ML, n), "fit")
+          )
+          print("checking %d estimators" % len(names))
+          bad = 0
+          for n in names:
+              est = getattr(ML, n)()
+              try:
+                  check_estimator(est, expected_failed_checks=expected_failed_checks(est))
+                  print("PASS", n)
+              except Exception as e:
+                  bad += 1
+                  print("FAIL %s: %s" % (n, str(e).splitlines()[0][:120]))
+          print("%d of %d passed" % (len(names) - bad, len(names)))
+          raise SystemExit(1 if bad else 0)
+          PY
+
+  coverage:
+    name: coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all,test]"
+
+      - name: Measure
+        # Branch coverage, not line coverage. Every defect this project has
+        # shipped lived in a branch ordinary data never reaches: the fallback
+        # when no complete cases exist, the refusal when a column is entirely
+        # missing, the single-class seed. Line coverage would have looked
+        # healthy throughout.
+        run: |
+          pytest tests/ -q --cov=MissLearn --cov-branch \
+                 --cov-report=term-missing --cov-report=xml
+
+      - name: Upload report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
+
+  build:
+    name: build and verify the distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build
+        run: |
+          python -m pip install --upgrade pip build twine
+          python -m build
+
+      - name: Check metadata
+        run: python -m twine check dist/*
+
+      - name: Install the built wheel into a clean environment and use it
+        # Building is not evidence that the artefact works. This installs the
+        # wheel somewhere with no relationship to the source tree and exercises
+        # the public API there, which is what catches a packaging error that
+        # an editable install hides.
+        run: |
+          python -m venv /tmp/fresh
+          /tmp/fresh/bin/pip install --upgrade pip
+          /tmp/fresh/bin/pip install dist/*.whl
+          cd /tmp
+          /tmp/fresh/bin/python -c "
+          import numpy as np, MissLearn as ML
+          rng = np.random.default_rng(0)
+          X = rng.normal(size=(200, 4))
+          y = X @ rng.normal(size=4) + rng.normal(scale=0.4, size=200)
+          X[rng.random(X.shape) < 0.2] = np.nan
+          m = ML.MissLinear(compute_se=False).fit(X, y)
+          assert np.all(np.isfinite(m.predict(X)))
+          print('installed wheel works:', ML.__version__)
+          "
+
+  docs:
+    name: documentation build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[all]"
+          pip install -r docs/requirements.txt
+
+      - name: Build
+        # -W turns warnings into errors. A broken cross-reference or a
+        # malformed docstring is a documentation bug and should fail here
+        # rather than be discovered by a reader.
+        run: sphinx-build -b html -W --keep-going docs docs/_build/html
+
+      - name: Upload site
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs-html
+          path: docs/_build/html
