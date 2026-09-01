@@ -36,7 +36,7 @@ pip install misslearn
 ```
 
 Requires Python 3.9 or later, `numpy>=1.22`, `scipy>=1.8` and
-`scikit-learn>=1.1`. Optional extras: `pandas` for DataFrame support,
+`scikit-learn>=1.6`. Optional extras: `pandas` for DataFrame support,
 `matplotlib` for the plotting helpers, `trees` for the NaN-native
 gradient-boosted learners that `MissEnsemble` accepts as members, and `all`
 for everything.

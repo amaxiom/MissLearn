@@ -35,6 +35,7 @@ of one estimator and not its siblings belongs in that estimator.
 from typing import Optional
 
 import numpy as np
+from sklearn.base import is_classifier
 
 __all__ = ["validate_input", "check_not_sparse", "encode_labels", "check_no_complex_data", "check_no_empty_features", "check_penalty", "check_positive_int", "check_choice", "check_copula",
            "check_tolerance", "check_positive_float", "public_parameter_name",
@@ -135,7 +136,7 @@ def validate_input(estimator, X, y=None, check_y=True, min_samples=2):
             "distribution, but at least one outcome must be observed."
             % type(estimator).__name__)
 
-    if getattr(estimator, "_estimator_type", None) == "classifier":
+    if is_classifier(estimator):
         from sklearn.utils.multiclass import type_of_target
         observed = y[~_isnan_safe(y)] if y.dtype.kind == "f" else y
         if observed.size:
@@ -315,7 +316,7 @@ def check_n_features(estimator, X):
 
 
 def _is_classifier(estimator) -> bool:
-    return getattr(estimator, "_estimator_type", None) == "classifier"
+    return is_classifier(estimator)
 
 
 def route_multiclass(estimator, X, y, fit_kwargs) -> Optional[object]:
@@ -328,9 +329,14 @@ def route_multiclass(estimator, X, y, fit_kwargs) -> Optional[object]:
     classes. Routing internally removes both problems at once and matches what
     a scikit-learn user expects a classifier to do.
 
-    Recursion is not a concern. ``MissMulticlass`` decomposes into K binary
-    sub-problems, so each sub-estimator sees exactly two classes and this
-    function declines to act on all of them.
+    Two guards prevent recursion, and both are needed. Each sub-estimator of
+    a routing is marked ``_is_multiclass_member`` and declined, which is why
+    decomposing into K binary problems terminates. ``MissMulticlass`` itself
+    is marked ``_is_multiclass_router`` and declined, which matters because
+    it is a classifier: without that, fitting one on three classes would
+    route it into another router until the stack ended. The second guard was
+    unnecessary only while ``MissMulticlass`` was a plain object rather than
+    a scikit-learn estimator.
 
     Returns
     -------
@@ -341,6 +347,8 @@ def route_multiclass(estimator, X, y, fit_kwargs) -> Optional[object]:
         return None
     if getattr(estimator, "_is_multiclass_member", False):
         return None                       # a sub-problem of an outer routing
+    if getattr(estimator, "_is_multiclass_router", False):
+        return None                       # already a router; routing it recurses
 
     y_arr = np.asarray(y)
     observed = y_arr[~_isnan_safe(y_arr)]

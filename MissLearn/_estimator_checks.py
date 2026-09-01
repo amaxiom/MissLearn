@@ -58,6 +58,7 @@ completely.
 from collections import OrderedDict
 
 import numpy as np
+from sklearn.base import is_classifier
 
 __all__ = ["check_missing_data_estimator", "MissingDataReport",
            "RegimeOutcome", "REGIMES", "DETERMINISM_REGIMES"]
@@ -431,7 +432,7 @@ class MissingDataReport(object):
 # ---------------------------------------------------------------------------
 
 def _is_classifier(est):
-    return getattr(est, "_estimator_type", None) == "classifier"
+    return is_classifier(est)
 
 
 def _clear_error(exc):
@@ -470,7 +471,7 @@ def check_missing_data_estimator(estimator, task=None, seed=0,
         Must follow the scikit-learn API and accept ``NaN`` in ``X``. A fresh
         clone is fitted for each regime, so the instance passed is untouched.
     task : {'regression', 'classification'}, optional
-        Inferred from ``_estimator_type`` when not given.
+        Inferred with ``sklearn.base.is_classifier`` when not given.
     seed : int
         Seeds the generated data, so a report is reproducible.
     fit_kwargs : dict, optional

@@ -527,6 +527,50 @@ All notable changes to MissLearn are documented here. The format follows
   On a machine without the extension the build failed exactly as it would have
   with no guard at all. The two are now merged.
 
+### Changed
+- **The declared scikit-learn floor is now 1.6**, raised from 1.1. It was
+  wrong rather than merely conservative: `MissTags.__sklearn_tags__` calls
+  `super().__sklearn_tags__()`, and `_sklearn_compat` feeds a `check_estimator`
+  keyword, and both arrived in 1.6. Installing against 1.1 through 1.5 gave a
+  package that imported and then misreported its tags, which is worse than one
+  that refuses to install. No upper bound is set. The continuous integration
+  matrix resolves scikit-learn 1.6.1 on Python 3.9 and 1.9.0 on Python 3.12,
+  so both ends of the supported range are now exercised on every run. That
+  coverage is what was missing when the incompatibility below went unnoticed.
+
+### Fixed
+- **Compatibility with scikit-learn 1.7 through 1.9.** `_estimator_type` was
+  removed in scikit-learn 1.9. Six places in the package read it through
+  `getattr(est, "_estimator_type", None)`, so its removal raised nothing: the
+  expression became `None`, every comparison against it became false, and the
+  guards stopped guarding while continuing to report success. Multiclass
+  routing no longer fired, so a binary classifier given three classes raised
+  "requires exactly 2 classes" instead of decomposing into one-vs-rest; the
+  continuous-target rejection stopped rejecting; and the pandas label handling
+  was skipped. All six now ask scikit-learn through `is_classifier` and
+  `is_regressor`, which read the tag on new versions and the attribute on old
+  ones. This is the same shape as the `MissEnsemble` membership defect fixed
+  above: a capability question answered by inspecting an attribute rather than
+  by asking, and failing silently when the attribute moved.
+- **`MissMulticlass` was not a scikit-learn estimator.** It was a plain class
+  with no `BaseEstimator` in its ancestry and no `__sklearn_tags__`, which
+  scikit-learn 1.6 tolerated by duck typing and 1.9 does not. It now inherits
+  `ClassifierMixin`, `MissTags` and `BaseEstimator`. Sitting outside the reach
+  of `check_estimator` had hidden four further defects, all fixed here:
+  `predict`, `predict_proba` and `decision_function` never called
+  `check_is_fitted`, so an unfitted call raised `AttributeError` from inside
+  the class rather than `NotFittedError`, which is the same defect corrected in
+  `MissImputer` earlier in this release; `__init__` validated `strategy`, which
+  breaks `clone` and rules the parameter out of a grid search, so that check
+  moved to `fit`; `estimator` had no default, so the class could not be
+  constructed bare, and it now falls back to `MissLogistic`; and
+  `n_features_in_` and `feature_names_in_` were never set. Making it a
+  classifier also meant `route_multiclass` would route a router into another
+  router without end, so routing now declines for anything marked
+  `_is_multiclass_router`. The lesson is the one this suite keeps teaching: the
+  class the contract could not see is the class that drifted from it.
+- All 21 estimators pass `check_estimator` on scikit-learn 1.6.1 and 1.9.0.
+
 ## [0.9.1]: 2026-07
 
 

@@ -146,6 +146,7 @@ kernel or a distance instead of a full posterior.
 | [`benchmarks/BENCHMARKS.md`](benchmarks/BENCHMARKS.md) | Guide to the synthetic benchmarks, and what makes each comparison fair |
 | [`CONTRIBUTING.md`](CONTRIBUTING.md) | Development setup, style, and the deprecation policy |
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1, and how to report a concern |
+| [`CITATION.cff`](CITATION.cff) | Citation metadata, read by GitHub and by reference managers |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release history |
 | [`docs/ROADMAP.md`](docs/ROADMAP.md) | Planned work |
 
@@ -169,12 +170,19 @@ MissLearn/
 └── LICENSE
 ```
 
+There is deliberately no separate staging copy of the package. One existed and
+drifted: three library fixes made in a single session reached only the source
+tree and would have shipped missing. A second copy that has to be kept in sync
+by hand is a defect in itself, so packaging now builds from `MissLearn/`
+directly. The previous staging area, including the verified 0.9.1 artefacts,
+is kept under `_archive/` rather than deleted.
+
 ## Citation
 
 If you use MissLearn in published work, please cite the software. There is no
 paper yet; this section will be updated when there is one.
 
-​```bibtex
+```bibtex
 @software{barnard2026misslearn,
   author  = {Barnard, Amanda S.},
   title   = {{MissLearn}: full-information machine learning from data with
@@ -184,13 +192,17 @@ paper yet; this section will be updated when there is one.
   url     = {https://github.com/amaxiom/MissLearn},
   note    = {Python package, MIT licence}
 }
-​```
+```
 
 Or in text:
 
 > Barnard, A. S. (2026). *MissLearn: full-information machine learning from
 > data with meaningful missingness* (Version 0.9.2) [Computer software].
 > https://github.com/amaxiom/MissLearn
+
+`CITATION.cff` in the repository root carries the same metadata in a machine
+readable form, which is what GitHub reads to offer **Cite this repository**
+in the sidebar.
 
 ## License
 

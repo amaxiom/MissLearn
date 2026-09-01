@@ -28,7 +28,13 @@ classifiers = [
 dependencies = [
     "numpy>=1.22",
     "scipy>=1.8",
-    "scikit-learn>=1.1",
+    # 1.6 is a hard floor, not a preference. MissTags.__sklearn_tags__ calls
+    # super().__sklearn_tags__(), which exists from 1.6, and
+    # _sklearn_compat.expected_failed_checks feeds a check_estimator keyword
+    # introduced in the same release. On 1.5 and earlier the package imports
+    # and then reports its tags wrongly, which is worse than refusing to
+    # install. No upper bound: 1.9 passes the full estimator contract.
+    "scikit-learn>=1.6",
 ]
 
 [project.optional-dependencies]

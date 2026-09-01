@@ -41,9 +41,13 @@ import warnings
 from typing import Optional
 
 import numpy as np
+from sklearn.base import BaseEstimator, ClassifierMixin
+from sklearn.utils.validation import check_is_fitted
+
+from ._base import MissTags
 
 
-class MissMulticlass:
+class MissMulticlass(ClassifierMixin, MissTags, BaseEstimator):
     """
     One-vs-Rest multi-class extension for binary MissLearn classifiers.
 
@@ -63,12 +67,18 @@ class MissMulticlass:
     feature_importances_std_ : ndarray
     """
 
-    def __init__(self, estimator, strategy: str = 'ovr'):
-        if strategy != 'ovr':
-            raise ValueError(
-                f"MissMulticlass: strategy='{strategy}' is not supported.  "
-                f"Only 'ovr' (One-vs-Rest) is currently available."
-            )
+    #: Read by ``route_multiclass`` so that a router is never routed into
+    #: another router. Before this class was a scikit-learn estimator it was
+    #: not recognised as a classifier, so the routing function declined on
+    #: its first test and the question never came up.
+    _is_multiclass_router = True
+
+    def __init__(self, estimator=None, strategy: str = 'ovr'):
+        # No validation here. scikit-learn requires a constructor to store
+        # its arguments and nothing else: clone() rebuilds an estimator from
+        # get_params and must never fail, and a parameter checked at
+        # construction cannot be swept by a grid search. strategy is
+        # validated in fit, where it would first be used.
         self.estimator = estimator
         self.strategy  = strategy
 
@@ -111,8 +121,35 @@ class MissMulticlass:
         **kwargs : forwarded to each sub-estimator's fit()
                    (e.g. groups for MissMixed-based estimators)
         """
+        if self.strategy != 'ovr':
+            raise ValueError(
+                f"MissMulticlass: strategy='{self.strategy}' is not "
+                f"supported.  Only 'ovr' (One-vs-Rest) is currently "
+                f"available."
+            )
+        if self.estimator is None:
+            # A meta-estimator with no default cannot satisfy the
+            # scikit-learn contract, which constructs every estimator with no
+            # arguments. MissLogistic is the binary classifier a one-vs-rest
+            # wrapper is usually built on, so it is the default, in the same
+            # way BaggingClassifier falls back to a decision tree. Imported
+            # here rather than at module scope: _logistic imports the routing
+            # helper from _conformance, which would close an import loop.
+            from ._logistic import MissLogistic
+            self._est_ = MissLogistic()
+        else:
+            self._est_ = self.estimator
+        # The scikit-learn contract requires both of these after fit, and
+        # nothing set them while this class was a plain object outside the
+        # reach of check_estimator. Column names are taken before the
+        # conversion to ndarray discards them.
+        _names = list(getattr(X, 'columns', [])) or None
         X = np.asarray(X, dtype=float)
         y = np.asarray(y)
+        self.n_features_in_ = X.shape[1]
+        if _names is not None and len(_names) == self.n_features_in_:
+            self.feature_names_in_ = np.asarray([str(c) for c in _names],
+                                                dtype=object)
 
         # Unique observed classes
         y_obs = y[~_is_nan(y)]
@@ -130,7 +167,7 @@ class MissMulticlass:
         # ------------------------------------------------------------------
         if self.n_classes_ == 2:
             self._binary = True
-            self._est    = copy.deepcopy(self.estimator)
+            self._est    = copy.deepcopy(self._est_)
             y_bin = _to_binary(y, self.classes_[1])   # positive = second class
             self._est.fit(X, y_bin, **kwargs)
             self.estimators_ = [self._est]
@@ -143,7 +180,7 @@ class MissMulticlass:
 
             for k, cls_label in enumerate(self.classes_):
                 y_bin = _to_binary(y, cls_label)     # NaN preserved
-                est_k = copy.deepcopy(self.estimator)
+                est_k = copy.deepcopy(self._est_)
                 try:
                     est_k.fit(X, y_bin, **kwargs)
                     self.estimators_.append(est_k)
@@ -174,6 +211,10 @@ class MissMulticlass:
 
             p_k = P(y=k | X) from sub-classifier k, then row-normalise.
         """
+        # Every estimator in the library reports an unfitted call through
+        # check_is_fitted. This class did not, because it was not a scikit-learn
+        # estimator and so was never put through check_estimator.
+        check_is_fitted(self)
         X = np.asarray(X, dtype=float)
         n = X.shape[0]
         K = self.n_classes_
@@ -199,6 +240,10 @@ class MissMulticlass:
 
     def predict(self, X: np.ndarray, **kwargs) -> np.ndarray:
         """Predicted class labels."""
+        # Every estimator in the library reports an unfitted call through
+        # check_is_fitted. This class did not, because it was not a scikit-learn
+        # estimator and so was never put through check_estimator.
+        check_is_fitted(self)
         proba = self.predict_proba(X, **kwargs)
         return self.classes_[np.argmax(proba, axis=1)]
 
@@ -229,6 +274,10 @@ class MissMulticlass:
         constant, which cannot reorder it either. The two now agree for
         arithmetic reasons rather than by luck.
         """
+        # Every estimator in the library reports an unfitted call through
+        # check_is_fitted. This class did not, because it was not a scikit-learn
+        # estimator and so was never put through check_estimator.
+        check_is_fitted(self)
         X = np.asarray(X, dtype=float)
         if self._binary:
             if hasattr(self._est, 'decision_function'):
@@ -294,7 +343,10 @@ class MissMulticlass:
         print(f"  Classes  : {self.classes_.tolist()}")
         print(f"  n_classes: {self.n_classes_}")
         print(f"  Strategy : {self.strategy}")
-        print(f"  Base est : {type(self.estimator).__name__}")
+        # the resolved sub-estimator, so the report does not read
+        # NoneType when the default was used
+        _base = getattr(self, "_est_", None) or self.estimator
+        print(f"  Base est : {type(_base).__name__}")
         if self.n_classes_ > 2:
             print()
             print(f"  Sub-classifiers ({self.n_classes_} binary OvR models):")
