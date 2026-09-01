@@ -1,0 +1,79 @@
+% Minimal pandoc LaTeX template for the MissLearn user guide.
+%
+% Pandoc's own default template calls \IfDocumentMetadataTF, which arrived in
+% the LaTeX kernel in 2022; the MiKTeX 21.12 installed here is older, so the
+% stock template fails before it reaches the document. This template asks for
+% nothing newer than that kernel provides, which keeps the PDF buildable on
+% the machine that has to build it rather than requiring a TeX upgrade.
+%
+% Build:
+%   pandoc docs/USER_GUIDE.md -o docs/MissLearn_User_Guide.pdf \
+%          --pdf-engine=xelatex --template=docs/_static/guide_template.tex \
+%          --toc --toc-depth=2 --no-highlight
+\documentclass[11pt,a4paper]{article}
+
+\usepackage{fontspec}
+\setmainfont{Segoe UI}
+\setmonofont{Consolas}[Scale=0.85]
+
+\usepackage[margin=1in]{geometry}
+\usepackage{longtable}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{calc}
+\usepackage{graphicx}
+\usepackage{fancyvrb}
+\usepackage{xcolor}
+\usepackage[normalem]{ulem}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[hidelinks]{hyperref}
+
+% Segoe UI carries every non-ASCII character the guide uses except one, so
+% that one is routed to its maths equivalent rather than silently dropping
+% out of the PDF. The others (superscript two and three, middle dot) render
+% from the text font directly.
+\usepackage{newunicodechar}
+\newunicodechar{≲}{\ensuremath{\lesssim}}
+
+% Pandoc emits these; they are not defined by the classes above.
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+\providecommand{\passthrough}[1]{#1}
+\providecommand{\pandocbounded}[1]{#1}
+
+% Verbatim blocks: small enough that the widest thing the guide prints, the
+% 74-column summary() report, fits inside the margin. breaklines is not used
+% because it belongs to fvextra, which this TeX installation does not carry.
+\DefineVerbatimEnvironment{verbatim}{Verbatim}{%
+  fontsize=\small,samepage=false,xleftmargin=0pt}
+
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0.6em}
+\setcounter{tocdepth}{$if(toc-depth)$$toc-depth$$else$2$endif$}
+\setcounter{secnumdepth}{-2}
+
+$if(title)$
+\title{$title$}
+$endif$
+$if(author)$
+\author{$for(author)$$author$$sep$ \and $endfor$}
+$endif$
+$if(date)$
+\date{$date$}
+$endif$
+
+\begin{document}
+
+$if(title)$
+\maketitle
+$endif$
+
+$if(toc)$
+{\hypersetup{linkcolor=black}\tableofcontents}
+\newpage
+$endif$
+
+$body$
+
+\end{document}
