@@ -239,7 +239,13 @@ def test_prediction_is_subset_invariant(name, X):
         half = np.asarray(est.predict(X[::2]), dtype=float)
     except ACCEPTABLE:
         return
-    assert np.allclose(full[::2], half, rtol=1e-6, atol=1e-8)
+    # equal_nan, as in _agrees above. The claim is invariance: the same row
+    # predicted two ways must give the same answer. A NaN in the same position
+    # in both is that answer agreeing, and without equal_nan the comparison is
+    # False whenever any prediction is NaN, whatever invariance holds. Whether
+    # a prediction should be NaN at all is a different claim, made by the
+    # conformance suite's test_refuses_clearly_or_answers_finitely.
+    assert np.allclose(full[::2], half, rtol=1e-6, atol=1e-8, equal_nan=True)
 
 
 @pytest.mark.parametrize("name", REGRESSORS[:2] + CLASSIFIERS[:2])

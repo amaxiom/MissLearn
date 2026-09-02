@@ -1008,8 +1008,27 @@ def test_fit_emits_no_numerical_warning(name, task, regime):
     declared = KNOWN_NUMERICAL_WARNINGS.get((name, regime))
     if declared:
         if not numerical:
-            pytest.fail("declared in KNOWN_NUMERICAL_WARNINGS but no longer "
-                        "warns; delete the entry")
+            # Not necessarily stale. Several declared warnings are raised
+            # inside a dependency rather than here, so whether the cell warns
+            # depends on the installed version. The MissLinear collinear cell
+            # is one: the warning comes from scipy's finite-difference
+            # gradient, and it appears on scipy 1.17 and not on 1.13, which is
+            # what Python 3.9 resolves. Deleting the entry would then make
+            # every newer-scipy environment fail the undeclared-warning
+            # assertion below instead, so one static declaration cannot
+            # satisfy both while the behaviour depends on scipy.
+            #
+            # This is a skip rather than a failure, and it names the versions
+            # so the -ra summary says where it was silent. Retiring an entry
+            # means confirming the warning is gone across the supported
+            # dependency range, not in one run.
+            import numpy as _np
+            import scipy as _sp
+            pytest.skip(
+                "declared in KNOWN_NUMERICAL_WARNINGS and silent here "
+                "(numpy %s, scipy %s). Confirm across the supported range "
+                "before deleting the entry." % (_np.__version__,
+                                                _sp.__version__))
         return
     assert not numerical, (
         "fit emitted %s. Either guard the boundary or record the cell in "

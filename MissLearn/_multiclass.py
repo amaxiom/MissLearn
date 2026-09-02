@@ -383,19 +383,14 @@ def _is_nan(y: np.ndarray) -> np.ndarray:
     """Return boolean mask of NaN positions.
 
     Handles numeric NaN, Python None, and pandas NA/NaT values safely.
-    The per-element loop guards against pd.NA whose comparison raises TypeError.
+
+    This was the correct implementation while ``encode_labels`` carried an
+    incorrect one, and the two never met because this class was not recognised
+    as a classifier. It now delegates, so there is one definition rather than
+    two that can drift apart again.
     """
-    try:
-        return np.isnan(y.astype(float))
-    except (ValueError, TypeError):
-        # Object array: may contain None, pd.NA, or strings
-        mask = np.zeros(len(y), dtype=bool)
-        for i, v in enumerate(y):
-            try:
-                mask[i] = v is None or bool(v != v)   # v != v is True only for float NaN
-            except (TypeError, ValueError):
-                mask[i] = True   # pd.NA and similar
-        return mask
+    from ._conformance import is_missing_label
+    return is_missing_label(y)
 
 
 def _to_binary(y: np.ndarray, positive_class) -> np.ndarray:

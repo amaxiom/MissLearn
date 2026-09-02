@@ -1053,10 +1053,18 @@ cross_val_score(MissLinear(), X, y, cv=3)              # NaN in X is fine
 ```
 
 `MissLinear` resolves as
-`MissLinear -> MissBase -> BaseEstimator -> RegressorMixin`, reports
-`_estimator_type` as `regressor`, and sets `n_features_in_` and
-`feature_names_in_` at fit time. Metadata routing is supported through
-`set_fit_request` and `set_predict_request`.
+`MissLinear -> RegressorMixin -> MissBase -> MissTags -> BaseEstimator`. The
+order matters rather than being incidental: `BaseEstimator` has to sit to the
+right of the mixins for the estimator tags to resolve through it, and
+scikit-learn says so explicitly when it does not. `is_regressor` reports
+`True`, and `n_features_in_` and `feature_names_in_` are set at fit time.
+
+Metadata routing works through the methods scikit-learn generates from the
+`fit` signature, so an estimator that takes metadata has them and one that
+does not, does not. `MissMixedRegressor().set_fit_request(groups=True)`
+records the request, because its `fit` takes `groups`; `MissLinear` has no
+`set_fit_request` at all, exactly as scikit-learn's own `PCA` does not. Both
+have `get_metadata_routing`.
 
 pandas is handled transparently: pass a DataFrame and column names propagate
 into `feature_names_in_`, so summaries and reports name the measurement rather
@@ -1064,12 +1072,18 @@ than a column index.
 
 Two things to know:
 
-- The estimator tag `allow_nan` currently reports `False`, even though the
-  estimators do accept `NaN`. The common paths above are unaffected, but a
-  third-party utility that consults the tag may refuse input it could have
-  handled.
 - scikit-learn's `StratifiedKFold` rejects `NaN` in `y`. Use
   `MissStratifiedKFold` when the response is incomplete (section 6.1).
+- `MissImputer.transform` returns a list of m completed datasets rather than
+  one array, so it does not meet the scikit-learn transformer contract and
+  cannot be dropped into a `Pipeline` as an intermediate step. Combine the m
+  fits yourself with Rubin's rules, or use the estimators directly, which
+  marginalise rather than impute and need no such step.
+
+The estimator tag `allow_nan` reports `True`, so a third-party utility that
+consults it will offer incomplete input rather than refusing it. `sparse`
+reports `False`: a sparse matrix cannot distinguish a structural zero from an
+absent entry, and that distinction is the subject of the library.
 
 ### 11.1 Checking your own estimator
 

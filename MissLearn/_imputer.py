@@ -58,9 +58,11 @@ from collections import defaultdict
 from typing import List, Optional, Tuple
 
 import numpy as np
+from sklearn.base import BaseEstimator
 from sklearn.utils.validation import check_is_fitted
 from scipy import stats as sp_stats
 
+from ._base import MissTags
 from ._utils import conditional_normal_params, degenerate_feature_mask
 
 
@@ -348,7 +350,7 @@ class _ConditionalMoments:
 # MissImputer
 # ---------------------------------------------------------------------------
 
-class MissImputer:
+class MissImputer(MissTags, BaseEstimator):
     """
     Multiple imputation by draws from the joint MVN conditional distribution.
 
@@ -417,7 +419,18 @@ class MissImputer:
         X : ndarray of shape (n, p), may contain NaN
         y : ndarray of shape (n,), optional; used only if include_y=True
         """
+        # Column names are read before the conversion to ndarray discards
+        # them. n_features_in_ counts the features the caller passed, not the
+        # columns of Z: with include_y=True the response is appended to Z for
+        # the joint fit, and it is not a feature.
+        _names = list(getattr(X, 'columns', [])) or None
         X = np.asarray(X, dtype=float)
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+        self.n_features_in_ = X.shape[1]
+        if _names is not None and len(_names) == self.n_features_in_:
+            self.feature_names_in_ = np.asarray([str(c) for c in _names],
+                                                dtype=object)
         if self.include_y:
             if y is None:
                 raise ValueError("MissImputer: include_y=True requires y to be passed.")

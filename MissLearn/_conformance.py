@@ -35,7 +35,7 @@ of one estimator and not its siblings belongs in that estimator.
 from typing import Optional
 
 import numpy as np
-from sklearn.base import is_classifier
+from ._sklearn_compat import is_classifier_safe
 
 __all__ = ["validate_input", "check_not_sparse", "encode_labels", "check_no_complex_data", "check_no_empty_features", "check_penalty", "check_positive_int", "check_choice", "check_copula",
            "check_tolerance", "check_positive_float", "public_parameter_name",
@@ -136,7 +136,7 @@ def validate_input(estimator, X, y=None, check_y=True, min_samples=2):
             "distribution, but at least one outcome must be observed."
             % type(estimator).__name__)
 
-    if is_classifier(estimator):
+    if is_classifier_safe(estimator):
         from sklearn.utils.multiclass import type_of_target
         observed = y[~_isnan_safe(y)] if y.dtype.kind == "f" else y
         if observed.size:
@@ -163,6 +163,34 @@ class EmptyFeatureError(ValueError):
     """
 
 
+def is_missing_label(y) -> np.ndarray:
+    """Boolean mask of the absent entries in a label vector.
+
+    A label can be absent in four ways and they are not interchangeable:
+    float ``nan``, Python ``None``, ``pandas.NA`` and ``pandas.NaT``. Only the
+    first answers to ``np.isnan``; ``None`` is not a float, and ``pd.NA``
+    raises ``TypeError`` when its truth value is taken, so a test written for
+    one of them silently or loudly fails on the others.
+
+    This is the single definition used by the whole library. It was previously
+    written once correctly in ``_multiclass`` and once incorrectly here, and
+    every classifier used the incorrect one.
+    """
+    y = np.asarray(y)
+    try:
+        return np.isnan(y.astype(float))
+    except (ValueError, TypeError):
+        # Object or extension dtype: inspect each entry, because pd.NA raises
+        # rather than answering when compared.
+        mask = np.zeros(y.shape[0], dtype=bool)
+        for i, v in enumerate(y.ravel()):
+            try:
+                mask[i] = v is None or bool(v != v)
+            except (TypeError, ValueError):
+                mask[i] = True      # pd.NA, pd.NaT and anything like them
+        return mask
+
+
 def encode_labels(estimator, y):
     """Map non-numeric class labels to integers, remembering the mapping.
 
@@ -184,15 +212,18 @@ def encode_labels(estimator, y):
     if y.dtype.kind in "biufc":
         return y, None
 
-    observed = np.array([v for v in y.ravel()
-                         if not (isinstance(v, float) and np.isnan(v))],
+    # One test for absence, shared with the rest of the library. The former
+    # test here was `isinstance(v, float) and np.isnan(v)`, which let None and
+    # pandas NA through to np.unique and raised on the sort.
+    missing = is_missing_label(y)
+    observed = np.array([v for v, m in zip(y.ravel(), missing) if not m],
                         dtype=object)
     classes = np.unique(observed)
     lookup = {c: i for i, c in enumerate(classes)}
     out = np.full(y.shape[0], np.nan, dtype=float)
-    for i, v in enumerate(y.ravel()):
-        if isinstance(v, float) and np.isnan(v):
-            continue
+    for i, (v, m) in enumerate(zip(y.ravel(), missing)):
+        if m:
+            continue            # absent stays absent, it is not a category
         out[i] = lookup[v]
     return out, classes
 
@@ -316,7 +347,7 @@ def check_n_features(estimator, X):
 
 
 def _is_classifier(estimator) -> bool:
-    return is_classifier(estimator)
+    return is_classifier_safe(estimator)
 
 
 def route_multiclass(estimator, X, y, fit_kwargs) -> Optional[object]:

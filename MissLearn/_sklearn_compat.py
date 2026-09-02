@@ -19,9 +19,44 @@ project can state this in a form its own tooling understands:
 Every entry needs a reason a reviewer can evaluate. "Known issue" is not one.
 An entry that can be removed by fixing the library should be fixed instead.
 """
-__all__ = ["EXPECTED_FAILED_CHECKS", "PER_ESTIMATOR_FAILED_CHECKS",
-           "expected_failed_checks"]
+from sklearn.base import is_classifier as _sk_is_classifier
+from sklearn.base import is_regressor as _sk_is_regressor
 
+__all__ = ["EXPECTED_FAILED_CHECKS", "PER_ESTIMATOR_FAILED_CHECKS",
+           "expected_failed_checks", "CONTRACT_EXEMPT",
+           "is_classifier_safe", "is_regressor_safe"]
+
+
+
+#: Classes that ``check_estimator`` should not be run against at all, as
+#: opposed to individual checks they are expected to fail. The distinction
+#: matters: an entry in EXPECTED_FAILED_CHECKS says "this estimator meets the
+#: contract except here"; an entry below says "this class is not the kind of
+#: thing the contract describes". Both need a reason a reviewer can weigh.
+#:
+#: Keep this list as short as the truth allows. A class is easier to exempt
+#: than to fix, and the fourteen estimators that were once left out of the
+#: continuous-integration list were not passing quietly: they were not being
+#: asked.
+CONTRACT_EXEMPT = {
+    "MissImputer": (
+        "scikit-learn sees a transform method and requires the transformer "
+        "contract, under which transform returns one array of shape "
+        "(n_samples, n_features_out). MissImputer.transform returns a list of "
+        "m completed datasets, which is what multiple imputation is: the m "
+        "draws are combined afterwards by Rubin's rules, and returning a "
+        "single array would discard the between-imputation variance that "
+        "makes the estimate honest. Declaring transformer_tags to satisfy the "
+        "discovery would state a contract the class does not meet, and the "
+        "transformer checks would then fail on the return value instead. "
+        "\n\nIt is still a BaseEstimator, which it needs to be: scikit-learn's "
+        "check_is_fitted calls get_tags from 1.7, so a class without "
+        "__sklearn_tags__ raises AttributeError from inside its own transform. "
+        "get_params, set_params and clone work, fit sets n_features_in_ and "
+        "feature_names_in_, and the estimators themselves need no imputation "
+        "step because they marginalise instead."
+    ),
+}
 
 #: Checks that cannot pass, with the reason each is out of reach.
 EXPECTED_FAILED_CHECKS = {
@@ -92,3 +127,47 @@ def expected_failed_checks(estimator=None):
         name = getattr(type(estimator), "__name__", None)
         declared.update(PER_ESTIMATOR_FAILED_CHECKS.get(name, {}))
     return declared
+
+
+# ---------------------------------------------------------------------------
+# Total forms of the two estimator-type questions
+# ---------------------------------------------------------------------------
+# Through scikit-learn 1.6, is_classifier and is_regressor read the
+# _estimator_type attribute and returned False for any object without it.
+# From 1.7 they go through get_tags, which raises AttributeError when nothing
+# in the object's MRO defines __sklearn_tags__. Eleven public classes in this
+# package are not BaseEstimator subclasses, so on 1.7 and later the plain
+# functions raise rather than answer for MissImputer, MissEnsemble,
+# MissExplainer, MissPreprocessor and the rest.
+#
+# Asking whether an arbitrary object is a classifier is a total question, and
+# an object that declares no estimator type is not one. These return that
+# answer instead of raising. Only AttributeError is caught, so a real failure
+# inside a genuine __sklearn_tags__ implementation still propagates.
+#
+# The deeper repair is to give the estimator-like classes among those eleven a
+# proper scikit-learn identity, which would also bring them within reach of
+# check_estimator. That is tracked separately; it is a wider change than a
+# compatibility shim.
+
+def is_classifier_safe(estimator) -> bool:
+    """``sklearn.base.is_classifier`` that answers False instead of raising.
+
+    Returns False for an object with no ``__sklearn_tags__`` and no
+    ``_estimator_type``, which is what scikit-learn itself did through 1.6.
+    """
+    try:
+        return bool(_sk_is_classifier(estimator))
+    except AttributeError:
+        return False
+
+
+def is_regressor_safe(estimator) -> bool:
+    """``sklearn.base.is_regressor`` that answers False instead of raising.
+
+    The counterpart of :func:`is_classifier_safe`; see its note.
+    """
+    try:
+        return bool(_sk_is_regressor(estimator))
+    except AttributeError:
+        return False

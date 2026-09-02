@@ -613,7 +613,9 @@ sklearn.base.BaseEstimator
     MissMulticlass
 ```
 
-MissBase provides: `_validate_and_convert`, `_store_fit_metadata`, `get_feature_names_out`, `missingness_report`, `conf_int`, `feature_importances_`, `_pvalues_from_zstat`, `_coef_table_lines`, `_importance_lines`, `get_metadata_routing`, `set_fit_request`, `set_predict_request`.
+MissBase provides: `_validate_and_convert`, `_store_fit_metadata`, `get_feature_names_out`, `missingness_report`, `conf_int`, `feature_importances_`, `_pvalues_from_zstat`, `_coef_table_lines`, `_importance_lines`, `get_metadata_routing`.
+
+`set_fit_request` and `set_predict_request` are deliberately absent. scikit-learn generates them from the `fit` and `predict` signatures, and from 1.7 it skips any estimator that already carries the attribute. MissBase used to define both as no-op stubs, which was harmless on 1.6, where the generated method still won, and on 1.7 and later shadowed it: `MissMixedRegressor().set_fit_request(groups=True)` recorded nothing and the groups were then refused or dropped, which turns a random-intercept model into an ordinary regression.
 
 ### 11.3 Performance Architecture
 

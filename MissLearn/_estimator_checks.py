@@ -58,7 +58,7 @@ completely.
 from collections import OrderedDict
 
 import numpy as np
-from sklearn.base import is_classifier
+from ._sklearn_compat import is_classifier_safe
 
 __all__ = ["check_missing_data_estimator", "MissingDataReport",
            "RegimeOutcome", "REGIMES", "DETERMINISM_REGIMES"]
@@ -432,7 +432,7 @@ class MissingDataReport(object):
 # ---------------------------------------------------------------------------
 
 def _is_classifier(est):
-    return is_classifier(est)
+    return is_classifier_safe(est)
 
 
 def _clear_error(exc):
@@ -471,7 +471,9 @@ def check_missing_data_estimator(estimator, task=None, seed=0,
         Must follow the scikit-learn API and accept ``NaN`` in ``X``. A fresh
         clone is fitted for each regime, so the instance passed is untouched.
     task : {'regression', 'classification'}, optional
-        Inferred with ``sklearn.base.is_classifier`` when not given.
+        Inferred with ``is_classifier_safe`` when not given, which
+        answers False for an object carrying no estimator type rather
+        than raising, as scikit-learn did through 1.6.
     seed : int
         Seeds the generated data, so a report is reproducible.
     fit_kwargs : dict, optional

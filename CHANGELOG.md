@@ -570,6 +570,130 @@ All notable changes to MissLearn are documented here. The format follows
   `_is_multiclass_router`. The lesson is the one this suite keeps teaching: the
   class the contract could not see is the class that drifted from it.
 - All 21 estimators pass `check_estimator` on scikit-learn 1.6.1 and 1.9.0.
+- **Absent class labels were rejected by every classifier**, and had been
+  before this release. `encode_labels` is the one function every classifier
+  passes its labels through, and it tested for an absent entry with
+  `isinstance(v, float) and np.isnan(v)`, which is true of float `nan` and of
+  nothing else. `None`, `pandas.NA` and `pandas.NaT` all survived the filter,
+  reached `np.unique` and killed the sort: `TypeError: '<' not supported
+  between instances of 'str' and 'NoneType'`, or `boolean value of NA is
+  ambiguous` for the pandas forms. So `MissLogistic().fit(X, y)` raised for an
+  object or nullable-dtype label column with an absent cell, which is how an
+  incomplete label column arrives from a real file, while the documentation
+  said an absent outcome is supported and still informs the feature
+  distribution.
+
+  It survived because `MissMulticlass` held the only correct implementation,
+  in its own `_is_nan`, and never reached the shared one: it was not
+  recognised as a classifier, so the label-encoding path skipped it. The class
+  whose tests covered exactly this input was the class excluded from the code
+  under test. Making it a classifier, above, routed it through the shared
+  helper and the defect surfaced at once.
+
+  There is now one definition, `is_missing_label` in `_conformance`, and
+  `_multiclass._is_nan` delegates to it rather than keeping a second copy.
+  `TestAbsentLabelsAcrossTheLibrary` asserts the claim of all seven
+  classifiers rather than one, with all four spellings of absence, because a
+  per-class test cannot find a defect in the helper the classes share.
+- **`MissMixedRegressor` silently discarded its `groups` on scikit-learn 1.7
+  and later.** `MissBase` defined `set_fit_request` and `set_predict_request`
+  as no-op stubs that warned and returned `self`, on the stated reasoning that
+  scikit-learn's generated method takes precedence. That was true on 1.6 and
+  false from 1.7, which skips generation when the attribute already exists in
+  the MRO, so the stub won: `set_fit_request(groups=True)` recorded nothing,
+  and a `Pipeline` or `cross_validate` given `groups` then raised
+  `UnsetMetadataPassedError`. `get_metadata_routing`'s own docstring records
+  what was at stake, tau 2.71 against 0.00 on the same data, since a random
+  intercept fitted without its groups collapses to an ordinary regression.
+  Both stubs are removed, so scikit-learn generates the real method for the
+  estimators that have metadata and the ones that have none simply do not
+  carry it, which is what `LinearRegression` and `PCA` respectively do.
+- **`is_classifier` and `is_regressor` are no longer called bare.** Replacing
+  the `_estimator_type` reads with them, above, fixed the silent-false problem
+  and introduced a raising one: from 1.7 those functions go through `get_tags`,
+  which raises `AttributeError` when nothing in the object's MRO defines
+  `__sklearn_tags__`. Eleven public classes are not `BaseEstimator`
+  subclasses, so each turned a question into an exception, and the unit suite
+  went from green on 1.6.1 to 179 failures on 1.9. `is_classifier_safe` and
+  `is_regressor_safe` in `_sklearn_compat` restore the totality 1.7 removed
+  and are used at all six sites. They catch `AttributeError` only, so a
+  genuine failure inside a real `__sklearn_tags__` still propagates.
+- **`MissImputer` was a plain class**, like `MissMulticlass` before it, and no
+  compatibility shim could cover it: scikit-learn's own `check_is_fitted`
+  calls `get_tags` from 1.7, and `MissImputer.transform` calls
+  `check_is_fitted(self)`. It now inherits `MissTags` and `BaseEstimator`, and
+  deliberately not `TransformerMixin`, since `transform` returns m completed
+  datasets rather than one array and should not claim a contract it does not
+  meet.
+- `np.trapz`, removed in numpy 2.x, was used twice in the test suite for
+  reference integrals. Both go through a shim that prefers `np.trapezoid`, so
+  the file runs on numpy 1.26 and on 2.x alike. A scan of every `np.` attribute
+  used anywhere in the package, tests, examples and benchmarks against numpy
+  2.4 found no others.
+- The library-wide sweeps selected estimators by `BaseEstimator` plus `fit`,
+  which had meant "has predict" only by accident, since the classes without
+  predict were not `BaseEstimator` subclasses. Giving `MissImputer` its
+  identity changed the membership as a side effect and twelve sweeps called
+  `predict` or `score` on a multiple-imputation transformer that has neither.
+  The predicate now requires `predict`, which restores the previous membership
+  and states the requirement instead of resting on a coincidence.
+
+- **`MissImputer.fit` never set `n_features_in_` or `feature_names_in_`**, so
+  nothing recorded the shape or the column names it was fitted on. Both are
+  set now, from the features the caller passed rather than from the joint
+  matrix, which with `include_y=True` also carries the response.
+- `MissImputer` is declared in a new `CONTRACT_EXEMPT` in `_sklearn_compat`,
+  with the reason. Giving it a scikit-learn identity brought it into the
+  continuous-integration contract sweep, where scikit-learn sees `transform`
+  and requires the transformer contract: one array of shape
+  `(n_samples, n_features_out)`. It returns a list of m completed datasets,
+  which is what multiple imputation is, and collapsing them to one array would
+  discard the between-imputation variance that makes the estimate honest.
+  Declaring `transformer_tags` to get past discovery would state a contract
+  the class does not meet. The workflow still enumerates everything and then
+  subtracts a named list, so an exemption is a visible decision rather than a
+  class quietly missing, and `TestContractExemptionsStayHonest` fails if an
+  exempt name stops existing, would not have been discovered anyway, carries
+  no argued reason, or starts passing the contract after all.
+- `test_prediction_is_subset_invariant` compared predictions with
+  `np.allclose` and no `equal_nan`, while the helper eleven lines above it in
+  the same file passes `equal_nan=True`. Any generated design that made a
+  prediction `NaN` failed the assertion even though both arrays were
+  elementwise identical, so the test was flaky by construction, passing or
+  failing on which examples hypothesis happened to draw. The claim it makes is
+  invariance; finiteness is a separate claim made by the conformance suite.
+- `test_fit_emits_no_numerical_warning` failed the `MissLinear` collinear cell
+  with "declared but no longer warns; delete the entry". The entry is not
+  stale. The warning is raised inside scipy's finite-difference gradient,
+  which the declaration itself says, and it appears on scipy 1.17 and not on
+  1.13, which is what Python 3.9 resolves. Deleting it would make every
+  newer-scipy environment fail the undeclared-warning assertion instead. That
+  branch is now a skip naming the numpy and scipy versions. The check that
+  catches new problems, that an undeclared cell must not warn, is unchanged.
+- `TestMetadataRequestStubsWarn` asserted that the no-op stubs warned, on the
+  reasoning that "metadata routing failing open is how a sample weight quietly
+  stops being applied". The reasoning was right and the guard was aimed one
+  level too high: the stubs did warn, and they also shadowed the real
+  generated method, so routing failed open underneath a test written to
+  prevent it. It is replaced by
+  `TestNothingShadowsGeneratedRequestMethods`, which asserts that no class in
+  the package defines a `set_*_request` of its own, by ownership rather than
+  presence, since scikit-learn installs its generated ones into the class
+  dictionary too.
+
+### Documentation
+- **The user guide warned about a defect that had already been fixed.** It
+  said the `allow_nan` tag "currently reports `False`, even though the
+  estimators do accept `NaN`", and that a third-party utility consulting it
+  "may refuse input it could have handled". It reports `True`, and has since
+  `MissTags` was introduced. Corrected, along with the stated MRO, which had
+  `BaseEstimator` in the wrong position, and the claim that the estimators
+  report `_estimator_type`, an attribute scikit-learn removed in 1.9.
+- The methods guide listed `set_fit_request` and `set_predict_request` among
+  what `MissBase` provides. It no longer provides either, and the entry now
+  says why.
+- The declared scikit-learn floor is stated as 1.6 in the user guide's
+  requirements, matching `pyproject.toml`.
 
 ## [0.9.1]: 2026-07
 

@@ -39,7 +39,7 @@ import warnings
 from collections import defaultdict
 
 import numpy as np
-from sklearn.base import is_classifier, is_regressor
+from ._sklearn_compat import is_classifier_safe, is_regressor_safe
 
 from ._base import MissBase
 from sklearn.utils import check_random_state
@@ -473,8 +473,8 @@ class MissEnsemble:
             # could not see. The failure was then deferred from fit to
             # predict_proba, which raised AttributeError from inside
             # _collect_proba instead of a diagnosable error at the door.
-            is_reg_model = is_regressor(est)
-            is_clf_model = is_classifier(est)
+            is_reg_model = is_regressor_safe(est)
+            is_clf_model = is_classifier_safe(est)
             if task == 'classification' and is_reg_model:
                 raise ValueError(
                     f"estimators[{i}] ({name}): y was detected as "

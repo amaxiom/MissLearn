@@ -6,7 +6,6 @@ reporting, confidence intervals, feature importance, and summary
 formatting for both MissLinear and MissLogistic.
 """
 
-import warnings
 
 import numpy as np
 
@@ -452,56 +451,20 @@ class MissBase(MissTags, BaseEstimator):
             )
         return super().get_metadata_routing()
 
-    def set_fit_request(self, **kwargs):
-        """Fallback for estimators with no fit metadata to request.
-
-        scikit-learn generates a real ``set_fit_request`` on any estimator
-        whose ``fit`` accepts metadata, and that generated method takes
-        precedence over this one; ``MissMixedRegressor``, whose ``fit`` takes
-        ``groups``, gets sklearn's. This is what remains for the estimators
-        that have nothing to route, and for scikit-learn releases before 1.3
-        where the API does not exist at all. Returns self for chaining.
-        """
-        # sklearn < 1.3: metadata routing API not available; silently ignore.
-        try:
-            from sklearn.utils.metadata_routing import MetadataRequest  # noqa: F401
-        except ImportError:
-            return self
-        # Warn when kwargs are provided so callers are not silently misled:
-        # routing is not actually configured by this stub.
-        if kwargs:
-            warnings.warn(
-                f"{self.__class__.__name__}.set_fit_request() is a no-op stub; "
-                "metadata routing is not fully implemented.  The requested "
-                f"routing for {list(kwargs)} will be ignored.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return self
-
-    def set_predict_request(self, **kwargs):
-        """Stub for sklearn >= 1.3 metadata routing API.
-
-        Full routing integration requires the _MetadataRequester mixin.
-        This no-op stub exists so that callers (e.g. Pipeline) that
-        conditionally call set_predict_request do not raise AttributeError.
-        Returns self for method chaining.
-        """
-        # sklearn < 1.3: metadata routing API not available; silently ignore.
-        try:
-            from sklearn.utils.metadata_routing import MetadataRequest  # noqa: F401
-        except ImportError:
-            return self
-        # Warn when kwargs are provided so callers are not silently misled.
-        if kwargs:
-            warnings.warn(
-                f"{self.__class__.__name__}.set_predict_request() is a no-op stub; "
-                "metadata routing is not fully implemented.  The requested "
-                f"routing for {list(kwargs)} will be ignored.",
-                UserWarning,
-                stacklevel=2,
-            )
-        return self
+    # set_fit_request and set_predict_request are deliberately NOT defined
+    # here. scikit-learn generates them from the fit and predict signatures,
+    # and from 1.7 it skips an estimator that already has the attribute in its
+    # MRO. Two no-op stubs used to sit at this point and were harmless on 1.6,
+    # where the generated descriptor still won. On 1.7 and later they won
+    # instead, so MissMixedRegressor().set_fit_request(groups=True) recorded
+    # nothing, and a Pipeline or cross_validate given groups either refused the
+    # fit or would have dropped them, which turns a random-intercept model into
+    # an ordinary regression without saying so.
+    #
+    # With nothing defined here, an estimator whose fit takes metadata gets
+    # scikit-learn's real method, and one that takes none has no such method,
+    # which is what scikit-learn's own estimators do: LinearRegression has it
+    # for sample_weight, PCA does not have it at all.
 
     # ------------------------------------------------------------------ #
     # scikit-learn estimator tags: see MissTags

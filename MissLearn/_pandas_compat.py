@@ -33,7 +33,7 @@ from __future__ import annotations
 from typing import List, Optional, Tuple
 import functools
 import numpy as np
-from sklearn.base import is_classifier, is_regressor
+from ._sklearn_compat import is_classifier_safe, is_regressor_safe
 
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ def _coerce_groups(groups):
 
 def _supervised(est):
     """True for estimators whose fit takes a target."""
-    return is_classifier(est) or is_regressor(est)
+    return is_classifier_safe(est) or is_regressor_safe(est)
 
 
 def _requires_y(est):
@@ -167,7 +167,7 @@ def _wrap_fit(method):
         # every estimator rejects the same malformed input in the same words.
         # Unsupervised fits (MissImputer) legitimately have no y.
         self._label_classes_ = None
-        if _supervised(self) and is_classifier(self):
+        if _supervised(self) and is_classifier_safe(self):
             _raw = args[0] if args else kwargs.get('y')
             if _raw is not None:
                 _enc, _cls = encode_labels(self, _raw)
