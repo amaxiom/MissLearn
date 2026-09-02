@@ -73,16 +73,23 @@ jobs:
           warnings.filterwarnings("ignore")
           import MissLearn as ML
           from MissLearn._sklearn_compat import expected_failed_checks
+          from MissLearn._sklearn_compat import CONTRACT_EXEMPT
           from sklearn.base import BaseEstimator
           from sklearn.utils.estimator_checks import check_estimator
 
+          # Discovery stays exhaustive and then subtracts a named list, so an
+          # exemption is a visible decision with a reason attached rather than
+          # a class quietly missing from an enumeration.
           names = sorted(
               n for n in dir(ML)
               if n.startswith("Miss")
               and inspect.isclass(getattr(ML, n))
               and issubclass(getattr(ML, n), BaseEstimator)
               and hasattr(getattr(ML, n), "fit")
+              and n not in CONTRACT_EXEMPT
           )
+          for n, why in sorted(CONTRACT_EXEMPT.items()):
+              print("EXEMPT %s: %s" % (n, why.split(".")[0]))
           print("checking %d estimators" % len(names))
           bad = 0
           for n in names:
