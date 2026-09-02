@@ -7,9 +7,9 @@
 [![License](https://img.shields.io/badge/license-MIT-yellow)](LICENSE)
 [![scikit-learn](https://img.shields.io/badge/scikit--learn-compatible-orange)](https://scikit-learn.org)
 
-**sklearn-style estimators with native missing-data support via Full Information Maximum Likelihood (FIML).**
+**No imputation. No listwise deletion. No fake data.**
 
-> No imputation. No listwise deletion. No fake data.
+**sklearn-style estimators with native missing-data support via Full Information Maximum Likelihood (FIML).**
 
 > **Pre-release.** Version 0.9.2 is complete and tested (2,658 tests, 95%
 > coverage) but has not yet been used by anyone outside its author. If you
