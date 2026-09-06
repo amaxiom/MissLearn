@@ -67,6 +67,23 @@ jobs:
         # two apply to the whole library and cannot be resolved without making
         # it worse, and one is an upstream libsvm limitation that a plain
         # scikit-learn SVC(probability=True) fails identically.
+        #
+        # shell: bash is required, not stylistic. This is the only step
+        # in the matrix that uses a heredoc, and the matrix includes
+        # windows-latest, where the default shell is PowerShell and <<
+        # is a redirection operator rather than a heredoc:
+        #
+        #   ParserError: Missing file specification after redirection
+        #   operator.
+        #
+        # So on Windows the script did not run wrongly, it never ran at
+        # all, and this step had been failing that way on both Windows
+        # legs for as long as it has existed. It stayed invisible because
+        # the Unit suite failed earlier in the job, so Windows never
+        # reached this step; repairing the suites is what surfaced it.
+        # Every other job in this file is ubuntu-only, so this is the
+        # only step affected.
+        shell: bash
         run: |
           python - <<'PY'
           import inspect, warnings
