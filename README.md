@@ -148,7 +148,6 @@ kernel or a distance instead of a full posterior.
 | [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) | Contributor Covenant 2.1, and how to report a concern |
 | [`CITATION.cff`](CITATION.cff) | Citation metadata, read by GitHub and by reference managers |
 | [`CHANGELOG.md`](CHANGELOG.md) | Release history |
-| [`docs/ROADMAP.md`](docs/ROADMAP.md) | Planned work |
 
 ## Requirements
 
