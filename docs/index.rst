@@ -41,8 +41,6 @@ not.
    :maxdepth: 1
    :caption: Project
 
-   ROADMAP
-   SKLEARN_CONTRIB_ROADMAP
    code_of_conduct
    contributing
    changelog

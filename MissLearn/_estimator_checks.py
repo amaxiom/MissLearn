@@ -55,6 +55,7 @@ missing column, and four classifiers returned plausible class labels whose
 ``predict_proba`` was entirely ``NaN``, so the label path concealed it
 completely.
 """
+import warnings
 from collections import OrderedDict
 
 import numpy as np
@@ -254,8 +255,22 @@ def _comparison_surface(est, Xa):
         if hasattr(est, method):
             try:
                 return np.asarray(getattr(est, method)(Xa), dtype=float)
-            except Exception:
-                pass
+            except Exception as exc:
+                # Not silent. This function exists because comparing labels
+                # hides drift: a label only moves when a score crosses a
+                # boundary, which is how MissLASSOClassifier drifted through
+                # liblinear's RNG while the determinism test stayed green.
+                # An estimator that has the method but fails would otherwise
+                # fall back to precisely the comparison this avoids, and the
+                # check that consumes this would quietly lose its sensitivity.
+                # Not having the method at all is fine and stays silent.
+                warnings.warn(
+                    "%s.%s exists but raised (%s: %s), so the comparison "
+                    "falls back to predict. Labels move only when a score "
+                    "crosses a boundary, so this comparison is less sensitive "
+                    "than it appears and small drift may go unreported."
+                    % (type(est).__name__, method, type(exc).__name__, exc),
+                    RuntimeWarning, stacklevel=2)
     return np.asarray(est.predict(Xa), dtype=float)
 
 

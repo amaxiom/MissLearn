@@ -230,8 +230,21 @@ class MissMulticlass(ClassifierMixin, MissTags, BaseEstimator):
             try:
                 p2 = est_k.predict_proba(X, **kwargs)   # (n, 2)
                 raw[:, k] = p2[:, 1]
-            except Exception:
-                pass
+            except Exception as exc:
+                # The uniform column stays, and the rows are renormalised
+                # below, so without this warning the caller receives a
+                # well-formed probability matrix in which one class's model
+                # contributed nothing and cannot tell. The fallback is kept:
+                # refusing the whole prediction over one failed sub-model
+                # would be worse. Being quiet about it is what was wrong.
+                warnings.warn(
+                    "%s: the sub-classifier for class %r failed at predict "
+                    "time (%s: %s). Its column falls back to a uniform %.4g "
+                    "before normalisation, so probabilities for that class "
+                    "carry no information from the data."
+                    % (type(self).__name__, self.classes_[k],
+                       type(exc).__name__, exc, 1.0 / K),
+                    RuntimeWarning, stacklevel=2)
 
         # Normalise rows so they sum to 1
         row_sums = raw.sum(axis=1, keepdims=True)
@@ -299,7 +312,16 @@ class MissMulticlass(ClassifierMixin, MissTags, BaseEstimator):
                 continue
             try:
                 p = est_k.predict_proba(X, **kwargs)[:, 1]
-            except Exception:
+            except Exception as exc:
+                # Same reasoning as predict_proba above: the row keeps the
+                # uniform log-odds and looks like a real score.
+                warnings.warn(
+                    "%s: the sub-classifier for class %r failed at predict "
+                    "time (%s: %s). Its scores fall back to the uniform "
+                    "log-odds and carry no information from the data."
+                    % (type(self).__name__, self.classes_[k],
+                       type(exc).__name__, exc),
+                    RuntimeWarning, stacklevel=2)
                 continue
             p = np.clip(p, 1e-10, 1 - 1e-10)
             scores[:, k] = np.log(p / (1 - p))

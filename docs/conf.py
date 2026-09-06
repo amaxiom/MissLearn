@@ -90,7 +90,21 @@ myst_heading_anchors = 4
 
 source_suffix = {".rst": "restructuredtext", ".md": "markdown"}
 master_doc = "index"
-exclude_patterns = ["_build"]
+# Internal notes. These live in the repository for contributors but are not
+# part of the published documentation, so they are excluded here rather than
+# added to the toctree.
+#
+# Excluding by name matters because Sphinx runs with -W. A file present in
+# docs/ but absent from every toctree is a build failure, and a toctree entry
+# naming an absent file is equally one, so without these patterns there is no
+# safe order in which such a file can be added or removed. Listing it here
+# makes every intermediate state legal.
+#
+# Superseded names are kept in the list. A bulk upload of the whole docs
+# directory can reintroduce a file that was removed earlier, and the pattern
+# ensures that reappearing in docs/ does not mean reappearing on the site.
+exclude_patterns = ["_build", "ROADMAP.md", "CONFORMANCE.md",
+                    "SKLEARN_CONTRIB_ROADMAP.md"]
 # exclude_patterns_extra is set above when sphinx-gallery is missing.
 # It has to be merged in here; assigning exclude_patterns after
 # computing it, which is what this file did, silently discarded it and

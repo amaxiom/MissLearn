@@ -96,8 +96,16 @@ def _check_estimator_compatible(est, label: str = 'estimator') -> None:
         return                                  # always OK
 
     if name in _SKLEARN_CART:
+        # Unreachable in any supported installation: the declared floor is
+        # scikit-learn 1.6. Kept rather than deleted because a floor in package
+        # metadata is a request, not an enforcement, and `pip install --no-deps`
+        # with an older scikit-learn produces exactly the configuration this
+        # was written for. There the message names the version; without it the
+        # failure happens later, inside a tree learner that quietly cannot take
+        # NaN. Marked no-cover because it is genuinely not exercised, which is
+        # more honest than contriving a test that fakes the version.
         import sklearn
-        try:
+        try:                                          # pragma: no cover
             from packaging.version import Version as V
             if V(sklearn.__version__) < V('1.3'):
                 raise ValueError(
@@ -105,7 +113,7 @@ def _check_estimator_compatible(est, label: str = 'estimator') -> None:
                     f"NaN support (installed: {sklearn.__version__}).  Use "
                     f"HistGradientBoosting* or upgrade scikit-learn."
                 )
-        except ImportError:
+        except ImportError:                           # pragma: no cover
             pass                                # packaging not available; skip check
         return
 

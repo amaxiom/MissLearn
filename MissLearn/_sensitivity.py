@@ -43,6 +43,7 @@ Usage
     from MissLearn import MissRidgeRegressor, MissSensitivity
     import numpy as np
 
+
     model = MissRidgeRegressor(alpha=1.0, compute_se=False)
     sens  = MissSensitivity(model, delta_range=(-3, 3), n_delta=25, m=10)
     sens.fit(X, y)
@@ -61,6 +62,7 @@ from typing import List, Optional, Tuple
 import numpy as np
 
 from ._imputer import MissImputer
+from ._utils import sqrt_variance_or_nan
 
 
 # ---------------------------------------------------------------------------
@@ -324,7 +326,9 @@ class MissSensitivity:
                         else np.zeros(p_coef)
                     m_eff = len(estimates_list)
                     T = W + (1.0 + 1.0 / m_eff) * B
-                    coef_se_curves[di] = np.sqrt(np.maximum(T, 0.0))
+                    # See sqrt_variance_or_nan: a non-positive pooled
+                    # variance is not a standard error of zero.
+                    coef_se_curves[di] = sqrt_variance_or_nan(T)
 
                 intercept_curve[di] = np.mean(intercepts_list)
 

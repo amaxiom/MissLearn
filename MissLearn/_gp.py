@@ -297,6 +297,27 @@ class _MissGaussianBase(MissBase):
         ill-conditioned matrices and avoids try/except branching overhead.
         """
         K = (K + K.T) * 0.5
+        # Both constants below are capped by the matrix's own scale. They were
+        # absolute, and K carries the units of the response squared: with y in
+        # small units signal_var_ was 6.0e-15 here, so an absolute jitter of
+        # 1e-8 was ten million times the matrix it was meant to regularise.
+        # The kernel is then all jitter, the process sees noise, and every
+        # prediction collapses to the mean while the fitted hyperparameters
+        # remain perfectly correct, which is what made it hard to see. The one
+        # caller that passed base_jitter=sn*sn was already scale-correct; the
+        # caller that took the default was not.
+        #
+        # min(absolute, relative) rather than the relative term alone, so
+        # behaviour at ordinary scales is exactly what it was: at a kernel
+        # scale of 60 the relative term is 6e-5 and the absolute 1e-8 still
+        # wins. Only when the matrix is smaller than the constant does the
+        # relative term take over, which is precisely the regime that broke.
+        _n = K.shape[0]
+        _scale = float(np.mean(np.diag(K))) if _n else 0.0
+        if not np.isfinite(_scale) or _scale <= 0.0:
+            _scale = 1.0
+        base_jitter = min(base_jitter, 1e-6 * _scale)
+        _eps = min(1e-6, 1e-6 * _scale)
         # Fast path: try plain Cholesky first (works for well-conditioned K)
         try:
             return np.linalg.cholesky(K + base_jitter * np.eye(K.shape[0]))
@@ -305,7 +326,7 @@ class _MissGaussianBase(MissBase):
         # Eigenvalue-clip path: guaranteed PSD, no looping
         eigvals, eigvecs = np.linalg.eigh(K)
         min_eig = float(eigvals.min())
-        jitter  = max(base_jitter, -min_eig + 1e-6) if min_eig < 1e-6 else base_jitter
+        jitter  = max(base_jitter, -min_eig + _eps) if min_eig < _eps else base_jitter
         K_psd   = (eigvecs * np.maximum(eigvals, 0.0)) @ eigvecs.T
         K_psd   = (K_psd + K_psd.T) * 0.5 + jitter * np.eye(K.shape[0])
         return np.linalg.cholesky(K_psd)
@@ -367,7 +388,14 @@ class _MissGaussianBase(MissBase):
         """
         rng = np.random.default_rng(0)     # fixed seed -- reproducible
 
-        log_y_std = np.log(max(y_std, 1e-6))
+        # Guard log(0), not smallness. This read max(y_std, 1e-6), which
+        # defeats the scale tracking the docstring above describes: at a
+        # response scale of 1e-8 the true log is -18.4 and the floor gives
+        # -13.8, so the amplitude and noise bounds sit a hundredfold too high
+        # and the optimiser cannot reach the right amplitude. A y_std of 1e-8
+        # is small but well defined and its logarithm is finite; only a
+        # constant response has no scale, and there the shift is zero.
+        log_y_std = float(np.log(y_std)) if y_std > 0.0 else 0.0
 
         n_ls      = n_params - 2 if has_noise else n_params - 1
         bounds_ls = [(-5.0, 3.0)] * n_ls

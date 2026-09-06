@@ -844,7 +844,44 @@ def standard_errors_from_variance(Var):
         Square roots of the positive diagonal entries, NaN elsewhere.
     """
     d = np.diag(np.asarray(Var, dtype=np.float64))
-    return np.sqrt(np.where(d > 0.0, d, np.nan))
+    return sqrt_variance_or_nan(d)
+
+
+def sqrt_variance_or_nan(v):
+    """Standard errors from variances already in vector form.
+
+    The same rule as :func:`standard_errors_from_variance`, for callers that
+    hold a vector of variances rather than a variance matrix. Rubin's rules
+    produce one: ``T = W + (1 + 1/m) B`` is a per-parameter total, not a
+    covariance, so the matrix form cannot be applied to it and two sites kept
+    ``np.sqrt(np.maximum(T, 0.0))`` after the other eight were converted.
+
+    That floor is wrong here for the same reason it was wrong there. ``W`` is
+    the mean of the within-imputation variances, and a variance from an
+    inverse Hessian that is not positive definite is negative, which is the
+    computation reporting its own failure. Flooring it at zero turns that
+    report into a standard error of exactly zero, which asserts a parameter
+    known without error. ``T`` is also exactly zero whenever every imputation
+    returns the same estimate with zero variance, which is degenerate but
+    legal input rather than a bug in the caller.
+
+    Returning NaN also removes a crash rather than papering over one: the
+    pooled t statistic divides by this value, and zero raised
+    ``ZeroDivisionError`` where NaN gives a NaN t statistic and a NaN p value,
+    which is the honest reading of a variance that could not be computed.
+
+    Parameters
+    ----------
+    v : array_like
+        Variances. Non-positive entries are treated as not computable.
+
+    Returns
+    -------
+    ndarray
+        Square roots of the positive entries, NaN elsewhere.
+    """
+    v = np.asarray(v, dtype=np.float64)
+    return np.sqrt(np.where(v > 0.0, v, np.nan))
 
 
 # ============================================================

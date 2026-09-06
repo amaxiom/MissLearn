@@ -63,7 +63,8 @@ from sklearn.utils.validation import check_is_fitted
 from scipy import stats as sp_stats
 
 from ._base import MissTags
-from ._utils import conditional_normal_params, degenerate_feature_mask
+from ._utils import (conditional_normal_params, degenerate_feature_mask,
+                     sqrt_variance_or_nan)
 
 
 # ---------------------------------------------------------------------------
@@ -692,7 +693,11 @@ class MissImputer(MissTags, BaseEstimator):
             T = W + (1.0 + 1.0 / m) * B
             result['within_var'] = W
             result['total_var']  = T
-            result['se']         = np.sqrt(np.maximum(T, 0.0))
+            # Not np.sqrt(np.maximum(T, 0.0)). A non-positive total
+            # variance means the pooled variance could not be computed,
+            # and reporting zero for it claims a parameter known without
+            # error. It also divided by zero two blocks below.
+            result['se']         = sqrt_variance_or_nan(T)
 
             if m > 1:
                 # Rubin (1987) degrees of freedom. Not Barnard-Rubin, which is

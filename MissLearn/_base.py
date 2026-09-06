@@ -66,12 +66,12 @@ class MissTags(object):
         return tags
 
     def _more_tags(self):
-        """The same declarations for scikit-learn < 1.6.
+        """The same declarations under the pre-1.6 tag name.
 
-        The package supports scikit-learn from 1.1 and the tag mechanism
-        changed in 1.6, so both are declared and the statement stays true
-        across the whole supported range rather than only on the
-        maintainer's machine.
+        Not for older releases: the declared floor is scikit-learn 1.6, so the
+        old mechanism is never the one in use. This stays because
+        ``check_estimator_tags_renamed`` requires it, which is the reason given
+        below, and removing it would fail fourteen estimators at once.
 
         This has to sit in the same class body as ``__sklearn_tags__``.
         scikit-learn's ``check_estimator_tags_renamed`` walks the MRO and
@@ -437,17 +437,25 @@ class MissBase(MissTags, BaseEstimator):
         ordinary regression, tau 2.71 against 0.00 on the same data, silently
         dropping them would have been worse still.
 
-        The version check is kept: the package supports scikit-learn from 1.1,
-        and routing arrived in 1.3, so on an older release this reports what
-        is missing rather than raising ``AttributeError`` from ``super()``.
+        The version check is kept even though the declared floor is now 1.6 and
+        routing arrived in 1.3, so it cannot fire in a supported install. A
+        floor in package metadata does not prevent an installation that ignores
+        it, and there this reports what is missing rather than raising
+        ``AttributeError`` from ``super()``.
         """
-        try:
+        # Unreachable at the declared floor of scikit-learn 1.6, where metadata
+        # routing has existed for three minor versions. Kept for the same
+        # reason as the equivalent guard in _ensemble: a metadata floor does not
+        # stop an installation that ignores it, and this reports what is missing
+        # instead of raising AttributeError from super(). Not exercised, and
+        # marked so rather than tested through a faked import.
+        try:                                          # pragma: no cover
             from sklearn.utils.metadata_routing import MetadataRequest  # noqa: F401
-        except ImportError:
+        except ImportError:                           # pragma: no cover
             raise NotImplementedError(
-                "get_metadata_routing requires scikit-learn >= 1.3; "
+                "get_metadata_routing requires scikit-learn >= 1.6; "
                 "found an older version.  Upgrade with: "
-                "pip install 'scikit-learn>=1.3'"
+                "pip install 'scikit-learn>=1.6'"
             )
         return super().get_metadata_routing()
 

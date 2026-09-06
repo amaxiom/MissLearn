@@ -50,6 +50,7 @@ Little, R. J. A. (1988).  A test of missing completely at random for
 
 from __future__ import annotations
 
+import warnings
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -305,7 +306,16 @@ class MissDiagnostic:
                         proba[np.arange(n), R_j].clip(1e-10, 1.0)
                     ))
                 )
-            except Exception:
+            except Exception as exc:
+                # Dropping the column silently shrinks the denominator of the
+                # verdict line ("10/11 variable(s) show MAR evidence"), which
+                # a reader uses to decide whether FIML is appropriate.
+                warnings.warn(
+                    "MissDiagnostic: the MAR test for %s could not be "
+                    "computed (%s: %s); it is omitted from the table and from "
+                    "the count in the verdict."
+                    % (self._col_label(j), type(exc).__name__, exc),
+                    RuntimeWarning, stacklevel=2)
                 continue
 
             lr_stat = max(0.0, 2.0 * (log_lik_full - log_lik_null))

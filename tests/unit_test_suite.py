@@ -109,7 +109,29 @@ TestLastEmptyRowBranches         the empty row through each family
 import sys
 import warnings
 
-sys.path.insert(0, r"C:\Users\Amanda\Favorites\Machine Learning\MissLearn")
+# Locate the package relative to this file, never by absolute path. This
+# line used to read
+#
+#     sys.path.insert(0, r"C:\Users\...\MissLearn")
+#
+# which shipped one machine's layout in a public repository. It never
+# failed a build, because inserting a directory that does not exist is
+# silent, so on a runner the entry was simply inert. It did two quieter
+# things. It made measurement against a copy of the tree wrong, since the
+# suite imported the original package while coverage measured the copy and
+# reported 0 per cent over 8,176 statements. And because the entry went to
+# position 0, ahead of the checkout, any stale copy at that path would be
+# imported in preference to the code under test, and the suite would report
+# on the wrong package while looking healthy.
+#
+# The two sibling suites already did it this way: try the import, and fall
+# back to the directory containing this one.
+try:
+    import MissLearn as _probe            # noqa: F401
+except ImportError:                       # pragma: no cover
+    import os
+    sys.path.insert(
+        0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import numpy as np
 import pytest
@@ -11151,6 +11173,400 @@ class TestEstimatorTypeQuestionsAreTotal:
                }[name]()
         assert is_classifier_safe(obj) is False
         assert is_regressor_safe(obj) is False
+
+
+class TestPooledStandardErrorsRefuseRatherThanFloor:
+    """A pooled variance that could not be computed is NaN, not zero.
+
+    Rubin's ``T = W + (1 + 1/m) B`` is non-negative in exact arithmetic, which
+    is why two sites kept ``np.sqrt(np.maximum(T, 0.0))`` when the other eight
+    flooring sites were converted. Neither reason holds. ``W`` is the mean of
+    the within-imputation variances, and a variance from an inverse Hessian
+    that is not positive definite is negative, which is the computation
+    reporting its own failure. ``T`` is exactly zero whenever every imputation
+    returns the same estimate with zero variance, which is degenerate but
+    legal input.
+
+    The floor turned both into a standard error of exactly zero. In the vector
+    form that was a silent wrong number sitting beside correct ones; in the
+    scalar form the pooled t statistic then divided by it and raised
+    ``ZeroDivisionError``. One cause, two shapes, and the crash is fixed by
+    removing the floor rather than by guarding the division.
+    """
+
+    def test_zero_within_variance_gives_nan_not_zero(self):
+        from MissLearn import MissImputer
+        r = MissImputer.combine(np.array([2.0, 2.0, 2.0]),
+                                np.array([0.0, 0.0, 0.0]))
+        assert np.isnan(r['se']), (
+            'a total variance of zero reported se=%r, which asserts a '
+            'parameter known without error' % (r['se'],))
+
+    def test_zero_within_variance_no_longer_raises(self):
+        """It used to be ZeroDivisionError from the pooled t statistic."""
+        from MissLearn import MissImputer
+        r = MissImputer.combine(np.array([2.0, 2.0, 2.0]),
+                                np.array([0.0, 0.0, 0.0]))
+        assert np.isnan(r['p_value'])
+
+    def test_a_negative_within_variance_is_not_floored(self):
+        """A negative variance is a failed computation, not a small one."""
+        from MissLearn import MissImputer
+        r = MissImputer.combine(np.array([1.0, 1.0]), np.array([-4.0, 1.0]))
+        assert np.isnan(r['se'])
+        assert np.isnan(r['p_value'])
+
+    def test_one_degenerate_parameter_does_not_contaminate_the_others(self):
+        """The vector form is where the wrong number was silent: a zero sat
+        beside standard errors that were perfectly good.
+        """
+        from MissLearn import MissImputer
+        r = MissImputer.combine(np.array([[2.0, 1.0], [2.0, 1.5]]),
+                                np.array([[0.0, 0.5], [0.0, 0.4]]))
+        se = np.asarray(r['se'])
+        assert np.isnan(se[0]), 'the degenerate parameter kept a zero'
+        assert np.isfinite(se[1]) and se[1] > 0, (
+            'the healthy parameter lost its standard error: %r' % (se[1],))
+
+    def test_nan_within_variance_still_propagates(self):
+        """The estimators now emit NaN for an unidentified standard error, so
+        pooling must carry it through rather than turn it into a number.
+        """
+        from MissLearn import MissImputer
+        r = MissImputer.combine(np.array([1.0, 1.2]), np.array([np.nan, 1.0]))
+        assert np.isnan(r['se'])
+
+    def test_a_well_posed_pooling_is_unchanged(self):
+        """The fix must not move any number that was already right."""
+        from MissLearn import MissImputer
+        est = np.array([1.0, 1.2, 0.9])
+        var = np.array([0.04, 0.05, 0.045])
+        r = MissImputer.combine(est, var)
+        m = len(est)
+        W = var.mean()
+        B = np.var(est, ddof=1)
+        assert np.isclose(r['se'], np.sqrt(W + (1.0 + 1.0 / m) * B))
+        assert np.isfinite(r['p_value'])
+
+    def test_the_rule_lives_in_one_place(self):
+        """The matrix and vector forms must not drift apart again: the two
+        sites were missed precisely because the shared helper only took a
+        matrix.
+        """
+        from MissLearn._utils import (standard_errors_from_variance,
+                                      sqrt_variance_or_nan)
+        d = np.array([4.0, 0.0, -1.0, 0.25])
+        from_matrix = standard_errors_from_variance(np.diag(d))
+        from_vector = sqrt_variance_or_nan(d)
+        assert np.array_equal(np.isnan(from_matrix), np.isnan(from_vector))
+        ok = ~np.isnan(from_vector)
+        assert np.allclose(from_matrix[ok], from_vector[ok])
+        assert np.allclose(from_vector[ok], [2.0, 0.5])
+
+
+class TestSilentFallbacksAnnounceThemselves:
+    """A computation that failed must not return a plausible number quietly.
+
+    Each site below kept a fallback that is well formed and indistinguishable
+    from a real answer. The fallbacks are still there, deliberately: refusing
+    a whole prediction over one failed sub-model, or a whole diagnostic over
+    one bad column, would be worse. What is asserted here is that the caller
+    is told.
+    """
+
+    class _BrokenSub:
+        """A sub-classifier that fails the way a real one might."""
+        def predict_proba(self, X, **kwargs):
+            raise RuntimeError('the sub-model is broken')
+
+    @staticmethod
+    def _three_class(n=90, p=3, seed=0):
+        rng = np.random.default_rng(seed)
+        X = rng.normal(size=(n, p))
+        X[rng.random(X.shape) < 0.10] = np.nan
+        y = np.array((['a', 'b', 'c'] * (n // 3))[:n], dtype=object)
+        return X, y
+
+    def _fitted_with_one_broken(self):
+        from MissLearn import MissLogistic, MissMulticlass
+        X, y = self._three_class()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            m = MissMulticlass(MissLogistic()).fit(X, y)
+        m.estimators_[1] = self._BrokenSub()
+        return m, X
+
+    @pytest.mark.parametrize('method', ['predict_proba', 'decision_function'])
+    def test_a_failed_sub_classifier_is_reported(self, method):
+        """Without this the row is renormalised and the matrix looks real."""
+        m, X = self._fitted_with_one_broken()
+        with pytest.warns(RuntimeWarning, match='sub-classifier'):
+            getattr(m, method)(X)
+
+    @pytest.mark.parametrize('method', ['predict_proba', 'decision_function'])
+    def test_the_output_is_still_usable(self, method):
+        """The warning replaces silence, not the fallback. Degrading
+        gracefully is the documented behaviour and must survive.
+        """
+        m, X = self._fitted_with_one_broken()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            out = np.asarray(getattr(m, method)(X))
+        assert out.shape == (X.shape[0], 3)
+        assert np.all(np.isfinite(out))
+
+    def test_the_warning_names_the_class_and_the_cause(self):
+        """A warning that does not say which class or why is barely better
+        than silence.
+        """
+        m, X = self._fitted_with_one_broken()
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            m.predict_proba(X)
+        msgs = [str(w.message) for w in caught
+                if issubclass(w.category, RuntimeWarning)]
+        assert any("'b'" in s and 'RuntimeError' in s
+                   and 'the sub-model is broken' in s for s in msgs), msgs
+
+    def test_an_unfitted_class_stays_silent(self):
+        """``estimators_[k] is None`` is the deliberate degradation for a
+        class that could not be fitted at all. That decision is made and
+        visible at fit time, so predict must not warn about it again.
+        """
+        m, X = self._fitted_with_one_broken()
+        m.estimators_[1] = None
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            m.predict_proba(X)
+        assert not [w for w in caught
+                    if 'sub-classifier' in str(w.message)]
+
+    def test_a_failed_continuous_surface_is_reported(self):
+        """``_comparison_surface`` exists because comparing labels hides
+        drift: a label moves only when a score crosses a boundary, which is
+        how MissLASSOClassifier drifted through liblinear's RNG while the
+        determinism test stayed green. An estimator whose
+        ``decision_function`` raises would otherwise fall back to exactly
+        that comparison, silently.
+        """
+        from MissLearn._estimator_checks import _comparison_surface
+
+        class _Raises:
+            classes_ = np.array([0.0, 1.0])
+            def decision_function(self, X):
+                raise ValueError('no surface today')
+            def predict(self, X):
+                return np.zeros(len(X))
+
+        X = np.zeros((5, 2))
+        with pytest.warns(RuntimeWarning, match='falls back to predict'):
+            out = _comparison_surface(_Raises(), X)
+        assert out.shape == (5,)
+
+    def test_an_estimator_without_the_method_stays_silent(self):
+        """Absence is not failure. A regressor has no decision_function and
+        that is not worth a warning.
+        """
+        from MissLearn._estimator_checks import _comparison_surface
+
+        class _PlainRegressor:
+            def predict(self, X):
+                return np.arange(len(X), dtype=float)
+
+        X = np.zeros((4, 2))
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter('always')
+            out = _comparison_surface(_PlainRegressor(), X)
+        assert not [w for w in caught if 'falls back' in str(w.message)]
+        assert out.shape == (4,)
+
+
+class TestPredictionsSurviveAChangeOfUnits:
+    """Rescaling every feature is a change of units, not of information.
+
+    A model fitted on ``X`` and the same model fitted on ``c * X``, each asked
+    to predict on its own input, should agree. The coefficients absorb the
+    factor; the predictions do not move.
+
+    This is the axis that found the worst defect of this sweep.
+    ``_bayes._shrink_psd`` clamped eigenvalues at ``max(1e-12, 1e-8 *
+    eigvals.max())``, and the absolute half wins as soon as the features are
+    small: at ``c = 1e-8`` the floor was 8.05e3 times the largest eigenvalue
+    and at ``c = 1e-150`` it was 8.05e287 times, which replaces the covariance
+    with a multiple of the identity. Two further absolute floors, on ``tau2``
+    and on the singular-matrix fallback in predict, did the same to the
+    regressor: ``tau2`` is a residual variance of X and so scales as X
+    squared, and flooring it at 1e-12 inflated it ten thousandfold at
+    ``c = 1e-8``, driving every feature's contribution to the posterior to
+    nothing. Predictions collapsed to the mean of y, finite and correctly
+    shaped, with nothing raised and nothing warned.
+
+    The asymmetry is the lesson worth keeping. Scaling the features *up* was
+    harmless at 1e8 and 1e150, because there the relative term dominates. A
+    guard that misbehaves in one direction only is almost always an absolute
+    constant sitting inside a relative comparison.
+
+    Small scales are not exotic for this library's users: a factor of 1e-8 is
+    the difference between metres and nanometres, and spectra, concentrations
+    and lattice parameters live at those magnitudes routinely.
+    """
+
+    SCALES = [1e-150, 1e-8, 1e8, 1e150]
+
+    @staticmethod
+    def _data(n=80, p=3, seed=0, classify=False):
+        rng = np.random.default_rng(seed)
+        X = rng.standard_normal((n, p))
+        lin = X @ np.array([1.5, -1.0, 0.5])
+        y = (lin > 0).astype(float) if classify else lin + rng.normal(scale=0.3, size=n)
+        X[rng.random(X.shape) < 0.10] = np.nan
+        return X, y
+
+    @pytest.mark.parametrize('name', ['MissBayesRegressor', 'MissBayesClassifier',
+                                      'MissBayes'])
+    @pytest.mark.parametrize('scale', SCALES)
+    def test_the_bayes_family_is_unit_invariant(self, name, scale):
+        """The family the sweep caught. Checked at every scale it failed."""
+        from sklearn.base import ClassifierMixin
+        cls = getattr(_ML, name)
+        X, y = self._data(classify=issubclass(cls, ClassifierMixin))
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            p0 = np.asarray(cls().fit(X, y).predict(X), dtype=float)
+            p1 = np.asarray(cls().fit(X * scale, y).predict(X * scale), dtype=float)
+        ok = np.isfinite(p0) & np.isfinite(p1)
+        assert ok.any(), '%s produced no finite prediction at scale %g' % (name, scale)
+        denom = max(1e-300, float(np.abs(p0[ok]).mean()))
+        rel = float(np.abs(p1[ok] - p0[ok]).mean() / denom)
+        assert rel < 0.05, (
+            '%s moved by %.3g of its own magnitude under a change of units by '
+            '%g, which means a scale-dependent constant is being compared '
+            'against a scale-dependent quantity' % (name, rel, scale))
+
+    def test_the_psd_floor_is_relative_not_absolute(self):
+        """Directly, so the reason survives even if the estimator changes.
+
+        The floor must track the matrix. An absolute term is invisible at
+        unit scale and dominant below it.
+        """
+        from MissLearn._bayes import MissBayesRegressor as _B
+        rng = np.random.default_rng(0)
+        A = rng.standard_normal((60, 3))
+        C0 = np.cov(A, rowvar=False)
+        for c in (1.0, 1e-8, 1e-150):
+            C = C0 * c * c
+            out = _B._shrink_psd(C, 0.1)
+            ev = np.linalg.eigvalsh(out)
+            assert np.all(ev > -1e-8 * max(1.0, abs(float(ev.max())))), (
+                'not PSD at scale %g' % c)
+            # the repaired matrix must still carry the original spread, not a
+            # floor: its largest eigenvalue tracks c squared
+            assert float(ev.max()) > 0.0
+            ratio = float(ev.max()) / (c * c)
+            assert 0.01 < ratio < 100.0, (
+                'at scale %g the repaired eigenvalue is %.3g, which does not '
+                'track the data (ratio %.3g)' % (c, ev.max(), ratio))
+
+    def test_a_zero_matrix_is_left_alone(self):
+        """The relative floor must not divide by a zero scale."""
+        from MissLearn._bayes import MissBayesRegressor as _B
+        Z = np.zeros((3, 3))
+        out = _B._shrink_psd(Z, 0.1)
+        assert np.all(np.isfinite(out))
+        assert np.allclose(out, 0.0)
+
+
+class TestPredictionsScaleWithTheResponse:
+    """Multiplying y by c must multiply every prediction by c.
+
+    The companion axis to :class:`TestPredictionsSurviveAChangeOfUnits`, and
+    it found three further defects of the same shape after the feature axis
+    was clean. All three failed at a response scale of 1e-8, which is an
+    ordinary change of units, not an extreme.
+
+    ``_bayes`` skipped every feature, because the test for "y is constant
+    among these rows" was ``var_y_j < 1e-12`` against an absolute constant.
+    At a response scale of 1e-8 the variance is 3.7e-16, so the test instead
+    asked "is y measured in small units", every slope stayed zero, and each
+    prediction became ``mu_Y_``.
+
+    ``_gp`` was subtler and worth remembering: the fitted hyperparameters were
+    *correct*, ``signal_var_`` scaling as c squared exactly, and the collapse
+    was entirely in prediction. ``_safe_cholesky`` added an absolute jitter of
+    1e-8 to a kernel whose scale was 6.0e-15, ten million times the matrix it
+    was regularising, so the process saw pure noise. One of its two call sites
+    already passed a scale-correct jitter and the other took the default.
+
+    Not asserted here, deliberately: MissLASSORegressor, MissRidgeRegressor,
+    MissMixedRegressor and MissSupportRegressor are exact at 1e-8 and move at
+    1e-150. That is the penalty and the epsilon-insensitive tube living in
+    coefficient units, which is standard and true of scikit-learn's own Ridge
+    and SVR. Asserting invariance there would be asserting something false.
+    """
+
+    SCALES = [1e-8, 1e8]
+
+    @staticmethod
+    def _data(n=60, p=3, seed=0):
+        rng = np.random.default_rng(seed)
+        X = rng.standard_normal((n, p))
+        y = X @ np.array([1.5, -1.0, 0.5]) + rng.normal(scale=0.3, size=n)
+        X[rng.random(X.shape) < 0.10] = np.nan
+        return X, y
+
+    @pytest.mark.parametrize('name', ['MissBayesRegressor', 'MissGaussianRegressor',
+                                      'MissLinear'])
+    @pytest.mark.parametrize('scale', SCALES)
+    def test_predictions_are_equivariant_in_y(self, name, scale):
+        cls = getattr(_ML, name)
+        X, y = self._data()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            p0 = np.asarray(cls().fit(X, y).predict(X), dtype=float)
+            p1 = np.asarray(cls().fit(X, y * scale).predict(X), dtype=float)
+        expect = p0 * scale
+        ok = np.isfinite(expect) & np.isfinite(p1)
+        assert ok.any(), '%s gave no finite prediction at y scale %g' % (name, scale)
+        denom = max(1e-300, float(np.abs(expect[ok]).mean()))
+        rel = float(np.abs(p1[ok] - expect[ok]).mean() / denom)
+        assert rel < 0.05, (
+            '%s: predictions moved by %.3g of their own magnitude when y was '
+            'scaled by %g, so an absolute constant is being compared against a '
+            'quantity that carries the units of y' % (name, rel, scale))
+
+    def test_the_gp_jitter_cannot_dominate_its_kernel(self):
+        """Directly, because the estimator-level symptom was invisible: the
+        fitted hyperparameters were exactly right and only prediction failed.
+        """
+        from MissLearn import MissGaussianRegressor
+        est = MissGaussianRegressor()
+        rng = np.random.default_rng(0)
+        A = rng.standard_normal((30, 30))
+        K0 = A @ A.T / 30.0
+        for s in (1.0, 1e-15, 1e15):
+            K = K0 * s
+            L = est._safe_cholesky(K)
+            recon = L @ L.T
+            scale = float(np.mean(np.diag(K)))
+            added = float(np.mean(np.diag(recon))) - scale
+            assert added <= 1e-5 * scale + 1e-300, (
+                'at kernel scale %.3g the jitter added %.3g, which is %.3g of '
+                'the matrix itself' % (scale, added, added / scale))
+
+    def test_ordinary_scales_are_untouched(self):
+        """The jitter cap is ``min(absolute, relative)`` precisely so that
+        behaviour where it already worked does not move. At a kernel scale of
+        order one the absolute term still wins.
+        """
+        from MissLearn import MissGaussianRegressor
+        est = MissGaussianRegressor()
+        rng = np.random.default_rng(1)
+        A = rng.standard_normal((20, 20))
+        K = A @ A.T / 20.0 + np.eye(20)
+        L = est._safe_cholesky(K)
+        added = float(np.mean(np.diag(L @ L.T))) - float(np.mean(np.diag(K)))
+        assert 0.0 <= added < 1e-6, (
+            'the jitter at unit scale changed to %.3g' % added)
 
 
 # ===========================================================================

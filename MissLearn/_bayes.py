@@ -106,12 +106,29 @@ class _MissBayesBase(MissBase):
         C = (1.0 - lam) * C + lam * np.diag(d)
         # PSD repair: pairwise-complete covariances need not be PSD
         eigvals, eigvecs = np.linalg.eigh(C)
-        floor = max(1e-12, 1e-8 * float(eigvals.max())) if eigvals.size else 1e-12
-        if eigvals.min() < floor:
+        # The floor is relative to the matrix, with no absolute term. It used
+        # to read max(1e-12, 1e-8 * eigvals.max()), and the absolute half wins
+        # whenever the features are measured in small units: at a feature scale
+        # of 1e-8 the floor was 8.05e3 times the largest eigenvalue, and at
+        # 1e-150 it was 8.05e287 times. Past that point every direction clamps
+        # to the same value, the covariance becomes a multiple of the identity,
+        # and the model has no structure left to condition on. Predictions
+        # collapse toward the prior mean while staying finite and correctly
+        # shaped, so nothing signals it. The asymmetry gave it away: scaling
+        # the features up was harmless, because there the relative term wins.
+        mx = float(eigvals.max()) if eigvals.size else 0.0
+        floor = 1e-8 * mx
+        if mx > 0.0 and eigvals.min() < floor:
             C = (eigvecs * np.maximum(eigvals, floor)) @ eigvecs.T
             C = 0.5 * (C + C.T)
-            # Restore the (well-estimated) per-feature variances
-            sd_ratio = np.sqrt(d / np.maximum(np.diag(C), 1e-12))
+            # Restore the (well-estimated) per-feature variances. Where the
+            # repaired variance is not positive the column is left unscaled,
+            # rather than divided by an absolute epsilon that may be many
+            # orders of magnitude larger than the variance it substitutes for.
+            diag_c = np.diag(C)
+            positive = diag_c > 0.0
+            sd_ratio = np.ones_like(d, dtype=float)
+            sd_ratio[positive] = np.sqrt(d[positive] / diag_c[positive])
             C = C * np.outer(sd_ratio, sd_ratio)
         return C
 
@@ -231,7 +248,31 @@ class MissBayesRegressor(RegressorMixin, _MissBayesBase):
         y_obs = y[~np.isnan(y)]
         self.mu_Y_     = float(np.mean(y_obs)) if len(y_obs) > 0 else 0.0
         self.sigma2_Y_ = float(np.var(y_obs, ddof=1)) if len(y_obs) > 1 else 1.0
-        self.sigma2_Y_ = max(self.sigma2_Y_, 1e-12)
+        # Relative floor, for the same reason as the tau2 floor below: an
+        # absolute 1e-12 exceeds the variance of y whenever the response is
+        # measured in small units, and the prior precision 1/sigma2_Y_ then
+        # sits at the wrong strength relative to the feature terms it is
+        # combined with. The absolute value is kept only for a response that
+        # is identically zero, where there is no scale to be relative to.
+        _y2 = float(np.mean(y_obs ** 2)) if len(y_obs) > 0 else 0.0
+        self.sigma2_Y_ = max(self.sigma2_Y_,
+                             1e-12 * _y2 if _y2 > 0.0 else 1e-300)
+        # The scale of the response, kept so the per-feature test below is
+        # relative to it rather than to an absolute constant.
+        self._y_var_floor_ = 1e-12 * _y2 if _y2 > 0.0 else 1e-300
+
+        # The spread of the features, computed before the loop so the floors
+        # below can be relative to it. An absolute floor here is wrong because
+        # tau2 is a residual variance of X and therefore scales as X squared:
+        # at a feature scale of 1e-8 the true value is 1e-16 and an absolute
+        # 1e-12 inflates it ten thousandfold, which drives every feature's
+        # contribution to the posterior to nothing and collapses each
+        # prediction to the mean of y.
+        x_vars  = np.array([np.nanvar(X[:, j]) for j in range(p)])
+        max_var = float(x_vars.max()) if x_vars.size > 0 else 1.0
+        # Stored so predict uses the same scale as fit rather than a second
+        # constant that can drift away from this one.
+        self._var_floor_ = 1e-12 * max_var if max_var > 0.0 else 1e-12
 
         # Available-case OLS of X_j on Y for each feature
         slopes     = np.zeros(p)
@@ -245,7 +286,14 @@ class MissBayesRegressor(RegressorMixin, _MissBayesBase):
             xj      = X[mask_j, j]
             yj      = y[mask_j]
             var_y_j = float(np.var(yj, ddof=1))
-            if var_y_j < 1e-12:
+            # Relative to the response, not an absolute 1e-12. This is the
+            # divisor of the slope below, so it must be a real test for "y is
+            # constant among these rows". Against an absolute constant it
+            # instead asks "is y measured in small units": at a response scale
+            # of 1e-8 the variance is 3.7e-16, every feature was skipped, all
+            # slopes stayed zero, and every prediction became mu_Y_. Finite,
+            # correctly shaped, silent.
+            if var_y_j < self._y_var_floor_:
                 continue
             cov_xy    = float(np.cov(xj, yj, ddof=1)[0, 1])
             b_j       = cov_xy / var_y_j
@@ -254,11 +302,10 @@ class MissBayesRegressor(RegressorMixin, _MissBayesBase):
             tau2_j    = float(np.var(resid, ddof=1)) if len(resid) > 1 else 1.0
             slopes[j]     = b_j
             intercepts[j] = a_j
-            tau2[j]       = max(tau2_j, 1e-12)
+            tau2[j]       = max(tau2_j, self._var_floor_)
 
-        # Var-smoothing
-        x_vars  = np.array([np.nanvar(X[:, j]) for j in range(p)])
-        max_var = float(x_vars.max()) if x_vars.size > 0 else 1.0
+        # Var-smoothing. x_vars and max_var were computed above, before the
+        # loop, so that the tau2 floor could be relative to them.
         if max_var > 0:
             tau2 += self.var_smoothing * max_var
 
@@ -332,8 +379,13 @@ class MissBayesRegressor(RegressorMixin, _MissBayesBase):
             try:
                 w = np.linalg.solve(T_obs, b_obs)        # T_obs^{-1} b_obs
             except np.linalg.LinAlgError:
-                # Singular T_obs: fall back to the diagonal (naive) update
-                w = b_obs / np.maximum(np.diag(T_obs), 1e-12)
+                # Singular T_obs: fall back to the diagonal (naive) update.
+                # The floor is the one computed at fit time, for the same
+                # reason as the tau2 floor: T is a residual covariance of X and
+                # an absolute constant here would dominate it whenever the
+                # features are measured in small units.
+                _floor = getattr(self, '_var_floor_', 1e-12)
+                w = b_obs / np.maximum(np.diag(T_obs), _floor)
 
             prec_post = prec_prior + float(b_obs @ w)
             var_post  = 1.0 / max(prec_post, 1e-300)
