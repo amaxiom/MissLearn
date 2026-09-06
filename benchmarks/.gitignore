@@ -1,0 +1,13 @@
+﻿# --- benchmarks: local-only, not part of the published collateral ----------
+# The shipped entry points are the two Explorer notebooks and scripts/.
+# NOTEBOOKS/ holds the per-family working notebooks and their generators,
+# which are for maintaining the benchmarks, not for using them.
+benchmarks/NOTEBOOKS/
+benchmarks/_archive/
+benchmarks/results/
+benchmarks/_create_explorer_notebooks.py
+
+# --- generated / transient -------------------------------------------------
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
