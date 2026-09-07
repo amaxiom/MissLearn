@@ -782,8 +782,19 @@ class MissPreprocessor:
         **kwargs : passed through to the underlying estimator (e.g. groups)
         """
         # Capture column labels before the conversion to ndarray discards them.
+        #
+        # This is a fallback, not the live path. The pandas compatibility layer
+        # wraps this method and converts the frame before the body runs, so X
+        # here has no `.columns` and df_names stays None; the branch below that
+        # reads feature_names_in_ from the compatibility layer is what actually
+        # sets the names. Kept because the wrapper is applied to the class
+        # rather than to the call, and reading the names from the argument is
+        # the right thing for any path that reaches the body unwrapped.
+        #
+        # Do not "fix" DataFrame naming here if it ever looks broken: the live
+        # code is upstream in _pandas_compat.
         df_names = None
-        if hasattr(X, 'columns'):
+        if hasattr(X, 'columns'):                     # pragma: no cover
             df_names = [str(c) for c in X.columns]
 
         X_raw = np.asarray(X)
@@ -800,8 +811,8 @@ class MissPreprocessor:
                     f"feature_names has {len(self.feature_names)} entries but "
                     f"X has {p} columns.")
             self.feature_names_in_ = [str(c) for c in self.feature_names]
-        elif df_names is not None and len(df_names) == p:
-            self.feature_names_in_ = df_names
+        elif df_names is not None and len(df_names) == p:  # pragma: no cover
+            self.feature_names_in_ = df_names          # see the note above
         elif (getattr(self, 'feature_names_in_', None) is not None
               and len(self.feature_names_in_) == p):
             # Set by the pandas compatibility layer; do not overwrite it.

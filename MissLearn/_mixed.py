@@ -1822,7 +1822,15 @@ class MissMixed(MissTags, BaseEstimator):
         AttributeError if task is regression.
         """
         check_is_fitted(self, 'model_')
-        if self.task_ != 'classification':
+        # Unreachable through normal access. The @available_if decorator on
+        # this method checks the same condition and raises first, with a
+        # better message: it names the concrete class ("'MissMixedRegressor'
+        # object has no attribute 'predict_proba'") where this names only the
+        # task. Kept as defence in depth for any path that reaches the
+        # function without the descriptor, and marked as not covered rather
+        # than reached by fetching the undecorated function, which would test
+        # an access the library never performs.
+        if self.task_ != 'classification':            # pragma: no cover
             raise AttributeError(
                 "predict_proba is only available when task_ == 'classification'."
             )
@@ -1847,8 +1855,8 @@ class MissMixed(MissTags, BaseEstimator):
         AttributeError if task is regression.
         """
         check_is_fitted(self, 'model_')
-        if self.task_ != 'classification':
-            raise AttributeError(
+        if self.task_ != 'classification':            # pragma: no cover
+            raise AttributeError(                     # see predict_proba above
                 "decision_function is only available when task_ == 'classification'."
             )
         return self.model_.decision_function(X, groups=groups)
@@ -1873,8 +1881,8 @@ class MissMixed(MissTags, BaseEstimator):
         AttributeError if task is classification.
         """
         check_is_fitted(self, 'model_')
-        if self.task_ != 'regression':
-            raise AttributeError(
+        if self.task_ != 'regression':                # pragma: no cover
+            raise AttributeError(                     # see predict_proba above
                 "predict_interval is only available when task_ == 'regression'."
             )
         return self.model_.predict_interval(X, groups=groups, alpha=alpha)

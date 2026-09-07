@@ -23,6 +23,7 @@ Usage
     model = rec.make_estimator()  # the top-ranked model, configured
     model.fit(X, y)
 """
+import warnings
 from typing import Dict, List, Optional, Sequence
 
 import numpy as np
@@ -318,6 +319,35 @@ class MissRecommender:
         # though: when neither arm clears the baseline the floors below make
         # the ratio 0, which reads as a decisive win for the linear probe. The
         # caller is told whether there was any skill to compare.
+        # A score of NaN is not a low score. scikit-learn does not raise when
+        # a fold fails, it warns and returns NaN, and Python's max keeps its
+        # first argument whenever the comparison is False, so a NaN passes
+        # straight through the floors below and comes out as a number:
+        #
+        #     s_lin NaN  ->  max(1e-6, nan) = 1e-6  ->  ratio 4.8e5
+        #     s_nn  NaN  ->  max(0.0,  nan) = 0.0   ->  ratio 0
+        #
+        # The second is the dangerous one. A ratio of zero reads as a decisive
+        # win for the linear arm, and has_skill is True because
+        # max(0.98, nan) returns 0.98, so the surviving arm alone clears the
+        # margin. The recommender would then recommend a linear family on a
+        # comparison that never happened.
+        #
+        # There is no comparison to report, so this refuses, exactly as it
+        # does for too few rows, no column with spread, one class present, or
+        # an exception in the fold.
+        if not (np.isfinite(s_lin) and np.isfinite(s_nn)):
+            warnings.warn(
+                "MissRecommender: the %s probe could not be scored (%s arm "
+                "returned a non-finite score: linear=%r, neighbour=%r), so no "
+                "comparison between the linear and neighbour families is "
+                "available and none is reported."
+                % (task,
+                   'linear' if not np.isfinite(s_lin) else 'neighbour',
+                   s_lin, s_nn),
+                RuntimeWarning, stacklevel=2)
+            return None
+
         lift_lin = max(1e-6, s_lin - floor)
         lift_nn = max(0.0, s_nn - floor)
         return {
