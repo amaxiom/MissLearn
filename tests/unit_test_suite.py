@@ -11569,6 +11569,594 @@ class TestPredictionsScaleWithTheResponse:
             'the jitter at unit scale changed to %.3g' % added)
 
 
+class TestPrefitCheckAdvisoryPaths:
+    """The advisory branches of ``prefit_check``, which is what a user reads
+    before trusting a fit.
+
+    Each was an uncovered branch. They matter more than their count suggests:
+    this function's whole job is to say what is wrong with the data before an
+    hour is spent fitting it, and a warning never emitted in a test is a
+    warning nobody has read.
+    """
+
+    @staticmethod
+    def _xy(n=30, p=3, seed=0):
+        rng = np.random.default_rng(seed)
+        return rng.normal(size=(n, p)), rng.normal(size=n)
+
+    def test_raise_on_error_raises_and_names_the_column(self):
+        """Raising is the default, so the message is the whole interface."""
+        from MissLearn import prefit_check
+        X, y = self._xy()
+        X[:, 1] = np.nan
+        with pytest.raises(ValueError, match='entirely NaN'):
+            prefit_check(X, y, raise_on_error=True)
+
+    def test_raise_on_error_false_returns_the_report_instead(self):
+        """The same condition reported rather than raised, so a caller sees
+        every problem at once instead of only the first.
+        """
+        from MissLearn import prefit_check
+        X, y = self._xy()
+        X[:, 1] = np.nan
+        r = prefit_check(X, y, raise_on_error=False)
+        assert not r.passed
+        assert any('entirely NaN' in e for e in r.errors)
+
+    def test_an_integer_column_with_few_levels_is_flagged(self):
+        """Five integer levels is ordinal or nominal, and the joint normal
+        working model is wrong for it. The warning must say what to do.
+        """
+        from MissLearn import prefit_check
+        X, y = self._xy()
+        X[:, 0] = np.repeat(np.arange(5), 6).astype(float)
+        r = prefit_check(X, y, raise_on_error=False)
+        hits = [w for w in r.warnings if 'categorical or ordinal' in w]
+        assert hits, r.warnings
+        assert 'MissPreprocessor' in hits[0]
+
+    def test_near_zero_variance_is_distinguished_from_constant(self):
+        """Constant is an error; nearly constant is a warning, because the fit
+        succeeds and may still be numerically poor. Two branches, one tested.
+        """
+        from MissLearn import prefit_check
+        X, y = self._xy()
+        X[:, 2] = np.random.default_rng(1).normal(size=X.shape[0]) * 1e-9
+        r = prefit_check(X, y, raise_on_error=False)
+        assert any('near-zero variance' in w for w in r.warnings), r.warnings
+
+    def test_more_features_than_effective_rows_is_flagged(self):
+        """A rank-deficient sample covariance is a different problem from any
+        one column being bad, and has its own branch.
+        """
+        from MissLearn import prefit_check
+        X, y = self._xy(n=4, p=8)
+        r = prefit_check(X, y, raise_on_error=False)
+        assert any('Effective sample size' in w for w in r.warnings), r.warnings
+
+    def test_copula_detection_walks_a_list_of_named_estimators(self):
+        """``_copula_configured`` walks nested estimators so the advice can say
+        whether the copula transform is already on. A list of
+        ``(name, estimator)`` pairs is how a pipeline or an ensemble holds
+        them, and that branch unpacked the tuple without ever being tested.
+        """
+        from MissLearn._validate import copula_is_configured
+        from MissLearn import MissLinear
+
+        class _Holder:
+            pass
+
+        h = _Holder()
+        h.estimators = [('first', MissLinear(compute_se=False, copula=False)),
+                        ('second', MissLinear(compute_se=False, copula=True))]
+        assert copula_is_configured(h) is True
+
+        h2 = _Holder()
+        h2.estimators = [('only', MissLinear(compute_se=False, copula=False))]
+        assert copula_is_configured(h2) is False
+
+
+class TestPreprocessorNamingAndShapePaths:
+    """``MissPreprocessor``'s naming and shape branches.
+
+    Not cosmetic. The source comment records why: hardcoding ``X0..Xp``
+    discarded both an explicit ``feature_names`` and a DataFrame's own columns,
+    so every compatibility warning named 'X4' rather than the column the reader
+    would recognise, and was therefore unusable. The branch that fixed that was
+    itself untested.
+    """
+
+    @staticmethod
+    def _frame(n=40, seed=0):
+        pd = pytest.importorskip('pandas')
+        rng = np.random.default_rng(seed)
+        X = rng.normal(size=(n, 3))
+        X[rng.random(X.shape) < 0.1] = np.nan
+        df = pd.DataFrame(X, columns=['alpha', 'beta', 'gamma'])
+        return df, rng.normal(size=n)
+
+    def test_dataframe_columns_become_the_feature_names(self):
+        from MissLearn import MissPreprocessor, MissLinear
+        df, y = self._frame()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            p = MissPreprocessor(MissLinear(compute_se=False)).fit(df, y)
+        assert list(p.feature_names_in_) == ['alpha', 'beta', 'gamma']
+
+    def test_explicit_feature_names_win_over_the_frame(self):
+        from MissLearn import MissPreprocessor, MissLinear
+        df, y = self._frame()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            p = MissPreprocessor(MissLinear(compute_se=False),
+                                 feature_names=['a', 'b', 'c']).fit(df, y)
+        assert list(p.feature_names_in_) == ['a', 'b', 'c']
+
+    def test_a_wrong_length_feature_names_is_refused(self):
+        from MissLearn import MissPreprocessor, MissLinear
+        df, y = self._frame()
+        with pytest.raises(ValueError, match='entries but'):
+            MissPreprocessor(MissLinear(compute_se=False),
+                             feature_names=['a', 'b']).fit(df, y)
+
+    def test_transform_refuses_a_different_number_of_features(self):
+        """Accepting the wrong width silently would encode the wrong columns."""
+        from MissLearn import MissPreprocessor, MissLinear
+        df, y = self._frame()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            p = MissPreprocessor(MissLinear(compute_se=False)).fit(df, y)
+        with pytest.raises(ValueError, match='fitted on'):
+            p.transform(np.zeros((5, 2)))
+
+
+class TestRecommenderDeclinesToAnswer:
+    """Where ``MissRecommender`` refuses rather than guesses.
+
+    The recommender's known weakness is that its two probes, a linear model
+    and a nearest-neighbour model, cannot see structure an RBF kernel finds.
+    What limits the damage is that it reports when it cannot tell instead of
+    resolving that into a confident recommendation. These are those reporting
+    paths, and none of them had been run.
+    """
+
+    @staticmethod
+    def _xy(n=80, p=3, seed=0, classify=False):
+        rng = np.random.default_rng(seed)
+        X = rng.standard_normal((n, p))
+        lin = X @ np.array([1.5, -1.0, 0.5])[:p]
+        y = (lin > 0).astype(float) if classify else lin + rng.normal(scale=.3, size=n)
+        X[rng.random(X.shape) < 0.10] = np.nan
+        return X, y
+
+    # ---- task detection ---------------------------------------------------
+
+    def test_an_entirely_absent_response_is_refused(self):
+        """There is no task to detect, and guessing one would pick a model."""
+        from MissLearn import MissRecommender
+        X, _ = self._xy()
+        with pytest.raises(ValueError, match='entirely missing'):
+            MissRecommender._detect_task(np.full(X.shape[0], np.nan))
+
+    def test_few_integer_levels_are_treated_as_classification(self):
+        """Integer-valued with few levels is multiclass, not regression. A
+        float response with the same values would be regression, so the test
+        is on the values rather than on the dtype.
+        """
+        from MissLearn import MissRecommender
+        y = np.repeat(np.arange(6), 12).astype(float)
+        assert MissRecommender._detect_task(y) == 'classification'
+
+    def test_many_distinct_values_are_treated_as_regression(self):
+        from MissLearn import MissRecommender
+        y = np.linspace(0.0, 1.0, 120)
+        assert MissRecommender._detect_task(y) == 'regression'
+
+    # ---- the intraclass correlation ---------------------------------------
+
+    def test_one_group_gives_no_icc(self):
+        """With a single group there is no between-group variance to find."""
+        from MissLearn import MissRecommender
+        X, y = self._xy(n=40)
+        assert MissRecommender()._icc(y, np.zeros(40, dtype=int)) is None
+
+    def test_as_many_groups_as_observations_gives_no_icc(self):
+        """Every group of size one leaves no within-group variance, so the
+        estimate is undefined rather than merely imprecise.
+        """
+        from MissLearn import MissRecommender
+        X, y = self._xy(n=40)
+        assert MissRecommender()._icc(y, np.arange(40)) is None
+
+    def test_a_usable_grouping_gives_a_number(self):
+        """The complement, so the refusals above are not passing by accident."""
+        from MissLearn import MissRecommender
+        rng = np.random.default_rng(3)
+        g = np.repeat(np.arange(10), 8)
+        y = np.repeat(rng.normal(scale=3.0, size=10), 8) + rng.normal(size=80)
+        icc = MissRecommender()._icc(y, g)
+        assert icc is not None and 0.0 <= icc <= 1.0
+
+    # ---- the probe --------------------------------------------------------
+
+    def test_too_few_rows_to_probe(self):
+        """Below forty observed rows the cross-validated comparison is noise,
+        so no comparison is offered.
+        """
+        from MissLearn import MissRecommender
+        X, y = self._xy(n=20)
+        assert MissRecommender()._probe(X, y, 'regression') is None
+
+    def test_no_column_with_any_spread(self):
+        """After mean imputation every column is constant, so there is nothing
+        for either arm to learn from.
+        """
+        from MissLearn import MissRecommender
+        X = np.zeros((60, 3))
+        y = np.random.default_rng(0).normal(size=60)
+        assert MissRecommender()._probe(X, y, 'regression') is None
+
+    def test_a_single_class_cannot_be_probed(self):
+        """Stratified cross-validation needs two classes; one class would
+        raise inside the split rather than give a score.
+        """
+        from MissLearn import MissRecommender
+        X, _ = self._xy(n=60)
+        y = np.ones(60)
+        assert MissRecommender()._probe(X, y, 'classification') is None
+
+    def test_a_non_finite_score_refuses_instead_of_reporting(self):
+        """scikit-learn does not raise when a fold fails; it warns and returns
+        NaN. Python's ``max`` keeps its first argument when the comparison is
+        False, so a NaN used to pass straight through the floors and come out
+        as a number, and the two arms failed asymmetrically:
+
+            linear NaN     ratio 4.8e5   has_skill False
+            neighbour NaN  ratio 0       has_skill True
+
+        The second is the dangerous one. A ratio of zero is, in the source's
+        own words, a decisive win for the linear probe, and has_skill was True
+        because ``max(0.98, nan)`` returns 0.98 and the surviving arm alone
+        cleared the margin. A minority class smaller than the fold count
+        triggers it on ordinary data.
+        """
+        from MissLearn import MissRecommender
+        X, _ = self._xy(n=60)
+        y = np.zeros(60)
+        y[0] = 1.0                      # one member, fewer than the folds
+        with pytest.warns(RuntimeWarning, match='could not be scored'):
+            assert MissRecommender()._probe(X, y, 'classification') is None
+
+    def test_the_nan_asymmetry_itself(self):
+        """Pinned directly, because the defect was in ``max``'s treatment of
+        NaN rather than in anything domain-specific, and the same shape can
+        reappear anywhere a floor is written this way.
+        """
+        nan = float('nan')
+        assert max(1e-6, nan) == 1e-6         # the NaN loses, silently
+        assert max(0.98, nan) == 0.98         # so does this one
+        assert np.isnan(max(nan, 1e-6))       # order decides which
+        assert np.isnan(max(nan, 0.98))
+
+    # ---- construction from a recommendation -------------------------------
+
+    def test_an_unknown_family_is_refused_by_name(self):
+        """``build`` names the legal choices, because a typo here otherwise
+        surfaces as an AttributeError from getattr much later.
+        """
+        from MissLearn import MissRecommender
+        X, y = self._xy()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            r = MissRecommender().fit(X, y)
+        with pytest.raises(ValueError, match='Unknown family'):
+            r.make_estimator(family='MissNotARealThing')
+
+
+class TestMixedEffectsDegenerateSeedsAndReporting:
+    """The fallbacks and reports of the mixed-effects models.
+
+    ``_mixed`` is the largest module in the package, and these were its
+    uncovered paths. The seeding ones matter most: both models start their
+    optimiser from an ordinary least squares or logistic fit and fall back to
+    a flat start when there is too little observed response to seed from, and
+    where a non-convex likelihood starts decides where it stops.
+    """
+
+    @staticmethod
+    def _grouped(n=60, p=3, per=5, seed=0):
+        rng = np.random.default_rng(seed)
+        X = rng.standard_normal((n, p))
+        g = np.repeat(np.arange(n // per), per)
+        b = np.repeat(rng.normal(scale=1.5, size=n // per), per)
+        y = X @ np.array([1.5, -1.0, 0.5])[:p] + b + rng.normal(scale=.3, size=n)
+        X[rng.random(X.shape) < 0.10] = np.nan
+        return X, y, g
+
+    # ---- the X-marginal with nothing observed -----------------------------
+
+    def test_a_row_with_no_observed_feature_contributes_no_density(self):
+        """``_logpdf_x_row`` integrates the observed part of a row against the
+        joint. With nothing observed there is no density to evaluate, and the
+        honest contribution to the likelihood is zero rather than an error.
+        """
+        from MissLearn._mixed import _logpdf_x_row
+        mu = np.zeros(3)
+        Sigma = np.eye(3)
+        assert _logpdf_x_row(np.full(3, np.nan), mu, Sigma) == 0.0
+
+    def test_a_partially_observed_row_does_contribute(self):
+        """The complement, so the zero above is a decision and not a default."""
+        from MissLearn._mixed import _logpdf_x_row
+        row = np.array([0.5, np.nan, np.nan])
+        v = _logpdf_x_row(row, np.zeros(3), np.eye(3))
+        assert np.isfinite(v) and v != 0.0
+
+    # ---- the scale guards -------------------------------------------------
+
+    def test_a_constant_response_does_not_divide_by_zero(self):
+        """The standardising divisor and the residual spread are both zero
+        here, and both are floored. Without the floors this is a division by
+        zero inside fit rather than a usable, if uninformative, model.
+        """
+        from MissLearn import MissMixedRegressor
+        X, _, g = self._grouped()
+        y = np.full(X.shape[0], 4.0)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            m = MissMixedRegressor().fit(X, y, groups=g)
+        pred = m.predict(X, groups=g)
+        assert np.all(np.isfinite(pred)), 'a constant response gave non-finite predictions'
+        assert np.allclose(pred, 4.0, atol=0.5), (
+            'the fit should reproduce the constant it was given, got %r' % pred[:3])
+
+    # ---- the degenerate seed ---------------------------------------------
+
+    def test_one_observed_response_takes_the_regressor_flat_seed(self):
+        """With fewer than two observed responses there is nothing to regress,
+        so the optimiser starts flat and the likelihood does the work.
+        """
+        from MissLearn import MissMixedRegressor
+        X, y, g = self._grouped()
+        y_sparse = np.full_like(y, np.nan)
+        y_sparse[0] = y[0]
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            m = MissMixedRegressor().fit(X, y_sparse, groups=g)
+        out = np.asarray(m.predict(X, groups=g), dtype=float)
+        assert out.shape == (X.shape[0],)
+        assert np.all(np.isfinite(out)), 'the flat seed gave non-finite predictions'
+
+    def test_a_single_class_seed_takes_the_classifier_flat_seed(self):
+        """The classifier reaches its fallback differently, and it cannot be
+        driven the regressor's way: a single observed class is refused before
+        seeding, correctly, which is not this branch.
+
+        Its condition is on the *seed*, which is the complete cases when there
+        are enough of them. So the shape that reaches it is a response with
+        both classes present overall but only one among the fully observed
+        rows: every instance of the other outcome has a missing feature. That
+        is a real and slightly unsettling pattern, and the flat seed is what
+        keeps it fitting rather than raising.
+        """
+        from MissLearn import MissMixedClassifier
+        rng = np.random.default_rng(5)
+        n, p, per = 60, 3, 5
+        X = rng.standard_normal((n, p))
+        g = np.repeat(np.arange(n // per), per)
+        y = np.zeros(n)
+        # the minority outcome exists only on rows that carry a hole
+        minority = np.arange(0, n, 4)
+        y[minority] = 1.0
+        X[minority, 0] = np.nan
+        assert len(np.unique(y)) == 2
+        complete = ~np.isnan(X).any(axis=1)
+        assert len(np.unique(y[complete])) == 1, 'the seed must hold one class'
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            m = MissMixedClassifier().fit(X, y, groups=g)
+        proba = np.asarray(m.predict_proba(X, groups=g), dtype=float)
+        assert proba.shape == (n, 2)
+        assert np.all(np.isfinite(proba))
+        assert np.allclose(proba.sum(axis=1), 1.0)
+
+    # ---- the reporting branches ------------------------------------------
+
+    @pytest.mark.parametrize('name', ['MissMixedRegressor', 'MissMixedClassifier'])
+    def test_summary_reports_a_missing_response_count(self, name, capsys):
+        """The count is printed only when some response is absent, which is
+        exactly the case a reader of this summary needs to know about.
+        """
+        cls = getattr(_ML, name)
+        X, y, g = self._grouped()
+        if name.endswith('Classifier'):
+            y = (y > np.nanmedian(y)).astype(float)
+        y = y.copy()
+        y[:6] = np.nan
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            m = cls().fit(X, y, groups=g)
+            m.summary()
+        out = capsys.readouterr().out
+        assert 'Missing (y)' in out, out[:400]
+
+    @pytest.mark.parametrize('name', ['MissMixedRegressor', 'MissMixedClassifier'])
+    def test_summary_says_when_the_copula_was_applied(self, name, capsys):
+        """With ``copula=True`` the coefficients are on the transformed scale,
+        which changes how every number below them is read, so the summary must
+        say so. This is a separate branch from the ``copula='auto'`` line and
+        only the latter was covered.
+        """
+        cls = getattr(_ML, name)
+        X, y, g = self._grouped()
+        if name.endswith('Classifier'):
+            y = (y > np.nanmedian(y)).astype(float)
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            m = cls(copula=True).fit(X, y, groups=g)
+            m.summary()
+        out = capsys.readouterr().out
+        assert 'Copula' in out and 'yes' in out, out[:400]
+
+
+class TestEnsembleRefusalsAndKwargHandling:
+    """Where ``MissEnsemble`` refuses, adapts, or reports.
+
+    It is the one estimator that holds other people's estimators, so a
+    contradiction between the response and a member is both easy to build and
+    expensive to find late. A regressor inside a classification ensemble would
+    otherwise contribute a continuous number to a vote.
+    """
+
+    @staticmethod
+    def _xy(n=80, p=3, seed=0, classify=False):
+        rng = np.random.default_rng(seed)
+        X = rng.standard_normal((n, p))
+        lin = X @ np.array([1.5, -1.0, 0.5])[:p]
+        y = (lin > 0).astype(float) if classify else lin + rng.normal(scale=.3, size=n)
+        X[rng.random(X.shape) < 0.10] = np.nan
+        return X, y
+
+    # ---- configuration refusals ------------------------------------------
+
+    def test_estimator_and_estimators_together_is_refused(self):
+        """Homogeneous bagging and a heterogeneous list are different modes and
+        the weights mean different things in each, so accepting both would
+        silently pick one.
+        """
+        from MissLearn import MissEnsemble, MissLinear
+        X, y = self._xy()
+        e = MissEnsemble(estimator=MissLinear(compute_se=False),
+                         estimators=[('a', MissLinear(compute_se=False))])
+        with pytest.raises(ValueError, match='not both'):
+            e.fit(X, y)
+
+    def test_neither_estimator_nor_estimators_is_refused(self):
+        """There is nothing to ensemble, and defaulting to some member would be
+        a decision the caller did not make.
+        """
+        from MissLearn import MissEnsemble
+        X, y = self._xy()
+        with pytest.raises(ValueError, match="Provide 'estimator'"):
+            MissEnsemble().fit(X, y)
+
+    def test_a_classifier_member_in_a_regression_ensemble_is_refused(self):
+        """The message must name the index and the member, because in a list of
+        ten the useful part is which one.
+        """
+        from MissLearn import MissEnsemble, MissLinear, MissLogistic
+        X, y = self._xy()                      # continuous y
+        e = MissEnsemble(estimators=[('ok', MissLinear(compute_se=False)),
+                                     ('bad', MissLogistic())])
+        with pytest.raises(ValueError, match='regression but'):
+            e.fit(X, y)
+
+    def test_a_regressor_member_in_a_classification_ensemble_is_refused(self):
+        from MissLearn import MissEnsemble, MissLinear, MissLogistic
+        X, y = self._xy(classify=True)
+        e = MissEnsemble(estimators=[('ok', MissLogistic()),
+                                     ('bad', MissLinear(compute_se=False))])
+        with pytest.raises(ValueError, match='classification but'):
+            e.fit(X, y)
+
+    def test_an_entirely_absent_response_cannot_have_a_task(self):
+        from MissLearn._ensemble import _detect_task
+        with pytest.raises(ValueError, match='no observed'):
+            _detect_task(np.full(10, np.nan))
+
+    def test_predict_proba_is_refused_on_a_regression_ensemble(self):
+        from MissLearn import MissEnsemble, MissLinear
+        X, y = self._xy()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            e = MissEnsemble(estimator=MissLinear(compute_se=False),
+                             n_estimators=3).fit(X, y)
+        with pytest.raises(AttributeError, match='classification'):
+            e.predict_proba(X)
+
+    # ---- keyword handling for foreign members -----------------------------
+
+    def test_groups_is_stripped_for_a_non_misslearn_member(self):
+        """``groups`` is a MissLearn concept. A scikit-learn estimator that
+        receives it raises deep inside its own fit, so it is removed before
+        the call rather than after the failure.
+        """
+        from MissLearn._ensemble import _filter_kwargs, _is_misslearn
+        from MissLearn import MissLinear
+        from sklearn.linear_model import LinearRegression
+        kw = {'groups': np.arange(5), 'sample_weight': np.ones(5)}
+        foreign = _filter_kwargs(LinearRegression(), kw)
+        assert 'groups' not in foreign and 'sample_weight' in foreign
+        native = _filter_kwargs(MissLinear(compute_se=False), kw)
+        assert 'groups' in native, 'a MissLearn member must keep its groups'
+        assert _is_misslearn(MissLinear(compute_se=False))
+        assert not _is_misslearn(LinearRegression())
+
+    def test_a_kwarg_that_cannot_become_an_array_passes_through(self):
+        """``_subset_kwargs`` keeps per-row arguments aligned with a bootstrap
+        resample. A value that is not array-like, or is the wrong length, is
+        not per-row and must survive untouched rather than raise.
+        """
+        from MissLearn._ensemble import _subset_kwargs
+        n, idx = 5, np.array([0, 2, 4])
+        kw = {'per_row': np.arange(n),
+              'scalar': 3.0,
+              'wrong_length': np.arange(n + 2),
+              'ragged': [[1, 2], [3]],
+              'a_set': {1, 2, 3}}
+        out = _subset_kwargs(kw, idx, n)
+        assert np.array_equal(out['per_row'], np.array([0, 2, 4]))
+        assert out['scalar'] == 3.0
+        assert len(out['wrong_length']) == n + 2
+        assert out['a_set'] == {1, 2, 3}
+
+    def test_predict_proba_presence_is_detected(self):
+        from MissLearn._ensemble import _has_predict_proba
+        from MissLearn import MissLinear, MissLogistic
+        assert _has_predict_proba(MissLogistic())
+        assert not _has_predict_proba(MissLinear(compute_se=False))
+
+    # ---- reporting branches ----------------------------------------------
+
+    def test_summary_reports_max_features_when_it_is_restricted(self, capsys):
+        """Printed only when below 1.0, because otherwise it is not a choice
+        the reader needs to know about.
+        """
+        from MissLearn import MissEnsemble, MissLinear
+        X, y = self._xy()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            e = MissEnsemble(estimator=MissLinear(compute_se=False),
+                             n_estimators=3, max_features=0.7).fit(X, y)
+            e.summary()
+        assert 'max_features' in capsys.readouterr().out
+
+    def test_summary_distinguishes_the_two_interval_meanings(self, capsys):
+        """A heterogeneous ensemble's interval is model disagreement only and
+        excludes aleatoric noise, where a homogeneous bootstrap interval
+        includes sampling uncertainty. Reading one as the other overstates or
+        understates the uncertainty, so the summary says which it is.
+        """
+        from MissLearn import MissEnsemble, MissLinear, MissRidgeRegressor
+        X, y = self._xy()
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            het = MissEnsemble(estimators=[
+                ('lin', MissLinear(compute_se=False)),
+                ('ridge', MissRidgeRegressor(alpha=1.0))]).fit(X, y)
+            het.summary()
+        out = capsys.readouterr().out
+        assert 'model-disagreement' in out or 'epistemic' in out, out[-400:]
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('ignore')
+            hom = MissEnsemble(estimator=MissLinear(compute_se=False),
+                               n_estimators=3).fit(X, y)
+            hom.summary()
+        out2 = capsys.readouterr().out
+        assert 'bootstrap CI' in out2, out2[-400:]
+
+
 # ===========================================================================
 # Entry point for whole-suite execution
 # ===========================================================================
