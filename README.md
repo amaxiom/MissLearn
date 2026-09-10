@@ -11,8 +11,9 @@
 
 **sklearn-style estimators with native missing-data support via Full Information Maximum Likelihood (FIML).**
 
-> **Pre-release.** Version 0.9.2 is complete and tested (2,658 tests, 95%
-> coverage) but has not yet been used by anyone outside its author. If you
+> **Pre-release.** Version 0.9.2 is complete and tested (2,770 tests, over
+> 95% branch coverage) but has not yet been used by anyone outside its
+> author. If you
 > are reading this because you were asked to try it, that is what you are
 > being asked to try: whether it works on your data, and whether the
 > documentation tells you what you need. Please open an issue for anything
@@ -109,7 +110,7 @@ Headline results (July 2026): synthetic data, 25% MAR missingness, 5-fold CV, ag
 
 **Regression R²:** linear family at parity (~0.70); MissNeighbors 0.52 vs 0.50; MissSupport **0.64 vs 0.17**.
 
-**Fast:** classifier fits in ~0.2 s and the LASSO regressor in ~1.3 s at n=600, p=8. The correctness suites are 2,658 tests (1,600 unit, 1,042 conformance, 16 property) at **95.0% coverage**, and run in about 25 minutes on an idle machine, considerably longer under load. Full per-family results, sweeps and plots are in [`benchmarks/`](benchmarks/), described in [`benchmarks/BENCHMARKS.md`](benchmarks/BENCHMARKS.md).
+**Fast:** at n=600, p=8 with 20% missing, single-core median of three fits: the logistic and ridge classifiers 0.22 and 0.21 s, the LASSO classifier 0.07 s, the LASSO and ridge regressors 0.19 and 0.20 s, the exact linear FIML model 2.2 s. The mixed-effects models are the expensive ones at 5.5 and 14.2 s, because each subject likelihood is an integral over the random intercept. The correctness suites are 2,770 tests (1,712 unit, 1,042 conformance, 16 property) at over **95% branch coverage**. Suite wall time is not quoted: it varies several-fold with what else is running, and every figure measured for it on a loaded machine has been wrong. Full per-family results, sweeps and plots are in [`benchmarks/`](benchmarks/), described in [`benchmarks/BENCHMARKS.md`](benchmarks/BENCHMARKS.md).
 
 **The exception is `MissGaussian`.** Exact Gaussian-process inference is
 O(n^3) in the number of rows, and this family is the one place where that
